@@ -20,7 +20,9 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from models import TYPE_NOMOS, TYPE_PD, TYPE_PNP, TYPE_YA, TYPE_KYA, TYPE_PSIFISMA
+from models import (TYPE_NOMOS, TYPE_PD, TYPE_PNP, TYPE_YA, TYPE_KYA, TYPE_PSIFISMA,
+                    TYPE_AN, TYPE_ND, TYPE_KANVOULIS, TYPE_KANAP, TYPE_APOF_DIOIK,
+                    TYPE_APOF_PERIF, TYPE_APOF_NPDD)
 
 # Apostrophe / keraia variants that appear in "ΥΠ' ΑΡΙΘΜ." — match any or none.
 _APOS = r"['ʼ΄´’‘]?"
@@ -28,12 +30,33 @@ _APOS = r"['ʼ΄´’‘]?"
 _ARITHM = r"ΑΡΙΘ(?:ΜΟΣ|ΜΟΝ|Μ|\.)?\.?"
 
 # Instrument-type header patterns, most specific first. Each captures the number
-# in group 'num' when the header carries one inline.
+# in group 'num' when the header carries one inline. Order matters: multi-word and
+# qualified headers (ΑΝΑΓΚΑΣΤΙΚΟΣ/ΝΟΜΟΘΕΤΙΚΟ) must precede the bare ΝΟΜΟΣ/ΔΙΑΤΑΓΜΑ.
 _TYPE_PATTERNS = [
     (TYPE_PNP, re.compile(r"ΠΡΑΞΗ\s+ΝΟΜΟΘΕΤΙΚΟΥ\s+ΠΕΡΙΕΧΟΜΕΝΟΥ", re.IGNORECASE)),
+    # FEK Α΄ — additional primary legislation (before the bare ΝΟΜΟΣ/ΔΙΑΤΑΓΜΑ rules)
+    (TYPE_AN, re.compile(
+        r"ΑΝΑΓΚΑΣΤΙΚΟΣ\s+ΝΟΜΟΣ\s+ΥΠ" + _APOS + r"\s*" + _ARITHM +
+        r"\s*(?P<num>\d{1,5})", re.IGNORECASE)),
+    (TYPE_ND, re.compile(
+        r"ΝΟΜΟΘΕΤΙΚΟ\s+ΔΙΑΤΑΓΜΑ\s+ΥΠ" + _APOS + r"\s*" + _ARITHM +
+        r"\s*(?P<num>\d{1,5})", re.IGNORECASE)),
+    (TYPE_KANVOULIS, re.compile(r"ΚΑΝΟΝΙΣΜΟΣ\s+(?:ΤΗΣ\s+)?ΒΟΥΛΗΣ", re.IGNORECASE)),
     (TYPE_PD, re.compile(
         r"ΠΡΟΕΔΡΙΚΟ\s+ΔΙΑΤΑΓΜΑ\s+ΥΠ" + _APOS + r"\s*" + _ARITHM +
         r"\s*(?P<num>\d{1,5})", re.IGNORECASE)),
+    # FEK Β΄ — regulatory acts (most specific phrasings first)
+    (TYPE_KANAP, re.compile(
+        r"ΚΑΝΟΝΙΣΤΙΚΗ\s+(?:ΠΡΑΞΗ|ΑΠΟΦΑΣΗ)", re.IGNORECASE)),
+    (TYPE_APOF_PERIF, re.compile(
+        r"ΑΠΟΦΑΣΗ\s+ΠΕΡΙΦΕΡΕΙΑΡΧΗ|ΑΠΟΦΑΣΗ\s+(?:ΔΗΜΑΡΧΟΥ|ΔΗΜΟΤΙΚΟΥ\s+ΣΥΜΒΟΥΛΙΟΥ)",
+        re.IGNORECASE)),
+    (TYPE_APOF_NPDD, re.compile(
+        r"ΑΠΟΦΑΣΗ\s+(?:ΤΟΥ\s+)?Δ(?:ΙΟΙΚΗΤΙΚΟΥ)?\.?\s*Σ(?:ΥΜΒΟΥΛΙΟΥ)?\.?\s+"
+        r"(?:ΤΟΥ\s+)?ΝΠΔΔ", re.IGNORECASE)),
+    (TYPE_APOF_DIOIK, re.compile(
+        r"ΑΠΟΦΑΣΗ\s+(?:ΔΙΟΙΚΗΤΗ|ΓΕΝΙΚΟΥ\s+ΓΡΑΜΜΑΤΕΑ|ΓΕΝ\.?\s*ΓΡΑΜΜΑΤΕΑ)",
+        re.IGNORECASE)),
     (TYPE_KYA, re.compile(
         r"ΚΟΙΝΗ\s+ΥΠΟΥΡΓΙΚΗ\s+ΑΠΟΦΑΣΗ", re.IGNORECASE)),
     (TYPE_YA, re.compile(
@@ -46,6 +69,13 @@ _TYPE_PATTERNS = [
     (TYPE_PD, re.compile(r"\bΠ\.?\s*Δ\.?\s*" + _ARITHM +
                          r"?\s*(?P<num>\d{1,5})", re.IGNORECASE)),
 ]
+
+# Types that legitimately carry no instrument number in the masthead (decisions,
+# resolutions, standing orders) — so "instrument number not found" is not a warning.
+_NUMBERLESS_TYPES = {
+    TYPE_PNP, TYPE_YA, TYPE_KYA, TYPE_PSIFISMA, TYPE_KANVOULIS,
+    TYPE_KANAP, TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD,
+}
 
 # Standalone number line, used when the type word and the number are on separate
 # lines, e.g.  "ΝΟΜΟΣ ΥΠ' ΑΡΙΘΜ.\n5090".
@@ -135,7 +165,7 @@ def parse_masthead(text: str) -> dict:
         if bn and bn.start() - header_end < 40:
             number = int(bn.group(1))
             header_end = bn.end()
-    if instrument_type not in (None, TYPE_PNP, TYPE_YA, TYPE_KYA, TYPE_PSIFISMA) \
+    if instrument_type is not None and instrument_type not in _NUMBERLESS_TYPES \
             and number is None:
         warnings.append("instrument number not found")
 

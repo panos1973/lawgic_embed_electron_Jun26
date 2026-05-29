@@ -69,6 +69,27 @@ def test_nomos_inline():
     assert r["warnings"] == []
 
 
+def test_additional_instrument_types():
+    from models import (TYPE_AN, TYPE_ND, TYPE_KANAP, TYPE_APOF_DIOIK,
+                        TYPE_KANVOULIS)
+    cases = [
+        ("ΤΕΥΧΟΣ ΠΡΩΤΟ Αρ. Φύλλου 9\nΑΝΑΓΚΑΣΤΙΚΟΣ ΝΟΜΟΣ ΥΠ' ΑΡΙΘΜ. 1846\nτ",
+         TYPE_AN, 1846),
+        ("ΤΕΥΧΟΣ ΠΡΩΤΟ Αρ. Φύλλου 9\nΝΟΜΟΘΕΤΙΚΟ ΔΙΑΤΑΓΜΑ ΥΠ' ΑΡΙΘΜ. 356\nτ",
+         TYPE_ND, 356),
+        ("ΤΕΥΧΟΣ ΠΡΩΤΟ Αρ. Φύλλου 9\nΚΑΝΟΝΙΣΜΟΣ ΤΗΣ ΒΟΥΛΗΣ\nτ", TYPE_KANVOULIS, None),
+        ("ΤΕΥΧΟΣ ΔΕΥΤΕΡΟ Αρ. Φύλλου 9\nΚΑΝΟΝΙΣΤΙΚΗ ΑΠΟΦΑΣΗ\nτ", TYPE_KANAP, None),
+        ("ΤΕΥΧΟΣ ΔΕΥΤΕΡΟ Αρ. Φύλλου 9\nΑΠΟΦΑΣΗ ΔΙΟΙΚΗΤΗ\nτ", TYPE_APOF_DIOIK, None),
+    ]
+    for text, exp_type, exp_num in cases:
+        r = parse_masthead(text)
+        assert r["instrument_type"] == exp_type, (exp_type, r["instrument_type"])
+        assert r["number"] == exp_num
+        # numberless types must NOT raise the missing-number warning
+        if exp_num is None:
+            assert "instrument number not found" not in r["warnings"]
+
+
 def test_nomos_variant_spelling_and_keraia():
     r = parse_masthead(NOMOS_VARIANT)
     assert r["instrument_type"] == TYPE_NOMOS

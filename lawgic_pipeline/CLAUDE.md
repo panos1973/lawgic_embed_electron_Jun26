@@ -32,19 +32,27 @@ REAL & working:  config, state (SQLite), models + canonical IDs + citation parse
                  amend (verb detect + nested-genitive target resolution + scope +
                  in-law consolidation to text_in_force, version bump).
                  domain classifier (layered cited-code + folded-keyword fallback).
+                 delegate (FEK Β΄ implementing acts -> enabling-provision edges).
+                 loader populates all 5 collections (flat, article, document,
+                 amendment, delegation); validate.py offline accuracy harness.
 PARTIAL/EXT:     enrich_llm (summary/keywords/EUROVOC/ΔΚΝ — real, skips w/o key).
-                 cross-law consolidation (in-law done; cross-law = store-level pass).
+                 cross-law consolidation (in-law done; cross-law = store-level pass,
+                 consolidate_cross_law + `cli consolidate`).
                  classify_dkn (hook for trained Ραπτάρχης/GLC model; corpus not bundled).
-                 loader populates flat + article + amendment; LawDocument/Delegation TBD.
+                 delegation graph cross-refs (scalar props written; ref-linking TBD).
 
-Tests: lawgic_pipeline/tests/ — 32 passing (masthead, segment, amend, enrich,
-extract integration, full-spine e2e dry run). Run: `python -m pytest tests/ -q`.
+Instrument types: FEK Α΄ ν./π.δ./Π.Ν.Π./ψήφισμα/Κανονισμός Βουλής/α.ν./ν.δ.;
+FEK Β΄ ΥΑ/ΚΥΑ/κανονιστική απόφαση/απόφαση Διοικητή-Γ.Γ./Περιφερειάρχη-ΟΤΑ/ΝΠΔΔ.
+
+Tests: lawgic_pipeline/tests/ — 51 passing (masthead, segment, amend, enrich,
+delegate, weaviate_io loaders, extract integration, full-spine e2e, validate
+harness). Run: `python -m pytest tests/ -q`.
 
 ## Remaining (where accuracy is still won)
-1. cross-law consolidation pass at the store level (apply external amend ops).
-2. trained ΔΚΝ classifier (GLC/Raptarchis47k) behind classify_dkn.
-3. populate Jun2026LawDocument + Jun2026Delegation collections.
-4. real-FEK validation: run a batch of genuine gazette PDFs through the spine.
+1. trained ΔΚΝ classifier (GLC/Raptarchis47k) behind classify_dkn.
+2. delegation/amendment graph cross-reference linking (endpoints exist -> link).
+3. real-FEK validation: run genuine gazette PDFs through `python validate.py`.
+4. confirm target Weaviate cluster (code default vs env WEAVIATE_URL differ).
 
 ## Non-negotiables
 - Insert with .with_tenant("gr") (done in weaviate_io) — never omit.

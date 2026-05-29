@@ -53,9 +53,13 @@ def test_full_spine_processes_to_done(fek_pdf, tmp_path, monkeypatch):
     def fake_load_amendments(client, ops, source_law=None, tenant=None):
         loaded["amendments"] += len(ops)
 
+    def fake_load_delegations(client, edges, source_law=None, tenant=None):
+        loaded["delegations"] = loaded.get("delegations", 0) + len(edges)
+
     monkeypatch.setattr(wio, "load_document", fake_load_document)
     monkeypatch.setattr(wio, "load_law", fake_load_law)
     monkeypatch.setattr(wio, "load_amendments", fake_load_amendments)
+    monkeypatch.setattr(wio, "load_delegations", fake_load_delegations)
 
     st = State(str(tmp_path / "state.db"))
     events = []

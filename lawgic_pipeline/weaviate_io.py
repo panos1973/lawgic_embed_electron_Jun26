@@ -160,6 +160,37 @@ def load_amendments(client, ops: list[AmendmentOp], source_law: Law = None,
         raise RuntimeError(f"amendment load failed: {amd.batch.failed_objects[:2]}")
 
 
+def load_delegations(client, edges, source_law: Law = None, tenant: str = None):
+    """Write Jun2026Delegation edges (FEK B implementing -> FEK A enabling).
+
+    Writes the denormalized scalar properties. The graph cross-references
+    (enabling_document/enabling_article/implementing_document) are linked by a
+    later graph-linking pass once both endpoints' nodes exist — a single ingest
+    cannot guarantee the enabling law is present, so we do not fabricate refs.
+    """
+    if not edges:
+        return
+    tenant = tenant or (source_law.jurisdiction if source_law else None) \
+        or config.DEFAULT_TENANT
+    ensure_tenant(client, config.GRAPH_DELEGATION, tenant)
+    deleg = client.collections.use(config.GRAPH_DELEGATION).with_tenant(tenant)
+    impl_num = source_law.instrument_id.split(".")[-1] if source_law else ""
+    with deleg.batch.dynamic() as b:
+        for e in edges:
+            props = {
+                "enabling_law_number": e.enabling_law_number,
+                "enabling_article_number": e.enabling_article_number,
+                "implementing_law_number": impl_num or e.implementing_id.split(".")[-1],
+                "delegated_authority": e.delegated_authority,
+                "delegation_scope": e.delegation_scope,
+            }
+            b.add_object(properties=props,
+                         uuid=generate_uuid5(
+                             f"deleg:{e.implementing_id}:{e.enabling_id}"))
+    if deleg.batch.failed_objects:
+        raise RuntimeError(f"delegation load failed: {deleg.batch.failed_objects[:2]}")
+
+
 def consolidate_cross_law(client, tenant: str = None) -> dict:
     """Store-level cross-law consolidation pass.
 

@@ -17,6 +17,7 @@ import pipeline.extract as extract
 import pipeline.segment as segment
 import pipeline.enrich as enrich
 import pipeline.amend as amend
+import pipeline.delegate as delegate
 import voyage_embed as ve
 import weaviate_io as wio
 
@@ -77,6 +78,7 @@ def process_document(client, st: State, path: str,
         emit("amend")
         law = amend.extract_amendments(law)
         law = amend.consolidate(law)
+        law = delegate.extract_delegations(law)
 
         emit("classify")
         law = enrich.classify_domain(law)
@@ -89,6 +91,7 @@ def process_document(client, st: State, path: str,
         wio.load_document(client, law)
         wio.load_law(client, law, vectors)
         wio.load_amendments(client, law.amendments, source_law=law)
+        wio.load_delegations(client, law.delegations, source_law=law)
 
         st.set_status(doc_id, "done", stage="load", confidence=1.0)
         emit("done", f"{len(law.provisions)} provisions")

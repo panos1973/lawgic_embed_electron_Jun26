@@ -12,11 +12,22 @@ import unicodedata
 
 TYPE_NOMOS, TYPE_PD, TYPE_PNP = "NOMOS", "PD", "PNP"
 TYPE_YA, TYPE_KYA, TYPE_PSIFISMA = "YA", "KYA", "PSIFISMA"
+# additional FEK Α΄ (enabling) primary legislation
+TYPE_AN, TYPE_ND, TYPE_KANVOULIS = "AN", "ND", "KAN_VOULIS"
+# additional FEK Β΄ (implementing) regulatory acts
+TYPE_KANAP, TYPE_APOF_DIOIK = "KAN_APOFASI", "APOFASI_DIOIKITI"
+TYPE_APOF_PERIF, TYPE_APOF_NPDD = "APOFASI_PERIF", "APOFASI_NPDD"
 
 _PREFIX_DISPLAY = {TYPE_NOMOS: "ν.", TYPE_PD: "π.δ.", TYPE_PNP: "Π.Ν.Π.",
-                   TYPE_YA: "ΥΑ ", TYPE_KYA: "ΚΥΑ ", TYPE_PSIFISMA: "ψήφισμα "}
+                   TYPE_YA: "ΥΑ ", TYPE_KYA: "ΚΥΑ ", TYPE_PSIFISMA: "ψήφισμα ",
+                   TYPE_AN: "α.ν.", TYPE_ND: "ν.δ.", TYPE_KANVOULIS: "Καν.Βουλής ",
+                   TYPE_KANAP: "καν.απόφ. ", TYPE_APOF_DIOIK: "απόφ.Διοικ. ",
+                   TYPE_APOF_PERIF: "απόφ.Περιφ. ", TYPE_APOF_NPDD: "απόφ.ΝΠΔΔ "}
 _PREFIX_KEY = {TYPE_NOMOS: "N", TYPE_PD: "PD", TYPE_PNP: "PNP",
-               TYPE_YA: "YA", TYPE_KYA: "KYA", TYPE_PSIFISMA: "PS"}
+               TYPE_YA: "YA", TYPE_KYA: "KYA", TYPE_PSIFISMA: "PS",
+               TYPE_AN: "AN", TYPE_ND: "ND", TYPE_KANVOULIS: "KANV",
+               TYPE_KANAP: "KANAP", TYPE_APOF_DIOIK: "APD",
+               TYPE_APOF_PERIF: "APP", TYPE_APOF_NPDD: "APN"}
 
 
 def make_instrument_id(t: str, number: int, year: int) -> str:
@@ -43,6 +54,20 @@ class AmendmentOp:
     effective_date: Optional[str] = None
     new_text: Optional[str] = None
     sub_edit_ordinal: Optional[str] = None
+    resolved: bool = True
+
+
+@dataclass
+class DelegationEdge:
+    """An implementing act (FEK B) exercising authority granted by an enabling
+    provision (FEK A), e.g. a ΥΑ/ΚΥΑ issued 'κατ' εξουσιοδότηση' of a law article.
+    """
+    enabling_id: str                          # canonical id of the enabling provision/law
+    implementing_id: str                      # instrument id of the act exercising it
+    enabling_law_number: str = ""             # denormalized "4412/2016"
+    enabling_article_number: str = ""         # denormalized "5"
+    delegated_authority: str = ""             # who received it (best-effort)
+    delegation_scope: str = ""                # short description (best-effort)
     resolved: bool = True
 
 
@@ -98,6 +123,7 @@ class Law:
     jurisdiction: str = "gr"
     provisions: list[Provision] = field(default_factory=list)
     amendments: list[AmendmentOp] = field(default_factory=list)
+    delegations: list["DelegationEdge"] = field(default_factory=list)
 
     def ordered_texts(self) -> list[str]:
         return [p.text_in_force for p in self.provisions]
