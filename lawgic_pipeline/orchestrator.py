@@ -71,12 +71,16 @@ def process_document(client, st: State, path: str,
                   fek_number=mh.get("fek_number", ""), fek_date=mh.get("fek_date") or "")
         law = segment.segment(text, law)
 
+        # Amend BEFORE classify/enrich/embed: consolidation rewrites text_in_force
+        # to the in-force version, and everything downstream (domain signal, LLM
+        # summary, vectors) must reflect the consolidated text, not as-enacted.
+        emit("amend")
+        law = amend.extract_amendments(law)
+        law = amend.consolidate(law)
+
         emit("classify")
         law = enrich.classify_domain(law)
-        law = enrich.enrich_llm(law)                        # STUB
-
-        emit("amend")
-        law = amend.extract_amendments(law)                 # PARTIAL
+        law = enrich.enrich_llm(law)                        # no-op without LLM key
 
         emit("embed")
         vectors = ve.embed_law_chunks(law.ordered_texts())
