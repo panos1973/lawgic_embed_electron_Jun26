@@ -47,14 +47,28 @@ def process_document(client, st: State, path: str,
     try:
         st.set_status(doc_id, "processing", stage="extract")
         emit("extract")
-        ex = extract.extract_pdf(path)                      # STUB until wired
+        ex = extract.extract_pdf(path)
         text = normalize_display(ex.text)
+        mh = ex.masthead or {}
+
+        # The instrument identity (type + number + year) is the backbone of the
+        # canonical id and therefore of the idempotent UUID. If we cannot identify
+        # the law, do NOT invent a placeholder id (that collides across docs) —
+        # route to human review instead.
+        itype, number, year = mh.get("instrument_type"), mh.get("number"), mh.get("year")
+        if not itype or number is None or year is None:
+            reason = ("could not identify instrument from masthead "
+                      f"(type={itype}, number={number}, year={year})")
+            st.set_status(doc_id, "review", stage="extract", error=reason)
+            emit("review", reason)
+            return "review"
 
         emit("segment")
-        # TODO: derive instrument type/number/year from masthead; placeholder below
-        law = Law(instrument_id=make_instrument_id(TYPE_NOMOS, 0, 0),
-                  instrument_key=make_instrument_key(TYPE_NOMOS, 0, 0),
-                  instrument_type=TYPE_NOMOS, jurisdiction=config.DEFAULT_TENANT)
+        law = Law(instrument_id=make_instrument_id(itype, number, year),
+                  instrument_key=make_instrument_key(itype, number, year),
+                  instrument_type=itype, jurisdiction=config.DEFAULT_TENANT,
+                  title=mh.get("title", ""), fek_series=mh.get("fek_series", ""),
+                  fek_number=mh.get("fek_number", ""), fek_date=mh.get("fek_date") or "")
         law = segment.segment(text, law)
 
         emit("classify")
