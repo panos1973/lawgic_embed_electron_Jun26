@@ -36,7 +36,10 @@ def test_full_spine_processes_to_done(fek_pdf, tmp_path, monkeypatch):
                         lambda chunks: [[0.0] * 8 for _ in chunks])
 
     # --- capture what would be written to Weaviate ---
-    loaded = {"laws": 0, "provisions": 0, "amendments": 0, "tenant": None}
+    loaded = {"docs": 0, "laws": 0, "provisions": 0, "amendments": 0, "tenant": None}
+
+    def fake_load_document(client, law, tenant=None):
+        loaded["docs"] += 1
 
     def fake_load_law(client, law, vectors, tenant=None):
         loaded["laws"] += 1
@@ -47,9 +50,10 @@ def test_full_spine_processes_to_done(fek_pdf, tmp_path, monkeypatch):
         assert all(p.canonical_id.startswith(law.instrument_id + "#")
                    for p in law.provisions)
 
-    def fake_load_amendments(client, ops, tenant=None):
+    def fake_load_amendments(client, ops, source_law=None, tenant=None):
         loaded["amendments"] += len(ops)
 
+    monkeypatch.setattr(wio, "load_document", fake_load_document)
     monkeypatch.setattr(wio, "load_law", fake_load_law)
     monkeypatch.setattr(wio, "load_amendments", fake_load_amendments)
 
@@ -61,6 +65,7 @@ def test_full_spine_processes_to_done(fek_pdf, tmp_path, monkeypatch):
     st.close()
 
     assert status == "done"
+    assert loaded["docs"] == 1
     assert loaded["laws"] == 1
     assert loaded["provisions"] >= 2
     assert loaded["tenant"] == "gr"                        # tenancy non-negotiable

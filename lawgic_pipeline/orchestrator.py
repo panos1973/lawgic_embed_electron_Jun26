@@ -86,8 +86,9 @@ def process_document(client, st: State, path: str,
         vectors = ve.embed_law_chunks(law.ordered_texts())
 
         emit("load")
+        wio.load_document(client, law)
         wio.load_law(client, law, vectors)
-        wio.load_amendments(client, law.amendments)
+        wio.load_amendments(client, law.amendments, source_law=law)
 
         st.set_status(doc_id, "done", stage="load", confidence=1.0)
         emit("done", f"{len(law.provisions)} provisions")
