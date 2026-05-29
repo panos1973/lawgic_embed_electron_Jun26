@@ -1,0 +1,26 @@
+# --- secrets & local state (NEVER commit) ---
+.env
+*.env
+settings.json
+*.db
+lawgic_state.db
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# --- node / electron ---
+node_modules/
+dist/
+build/
+out/
+*.log
+
+# --- os / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
