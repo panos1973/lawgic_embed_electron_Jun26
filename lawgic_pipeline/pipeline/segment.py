@@ -116,4 +116,22 @@ def segment(text: str, law: Law) -> Law:
             hierarchy_path=path, text_in_force=body,
             text_normalized=fold_for_bm25(body),
             content_hash=hashlib.sha256(body.encode()).hexdigest()))
+
+    # Fallback: instruments with no internal Άρθρο/ΠΑΡΑΡΤΗΜΑ structure (most FEK
+    # decisions) must still yield one embeddable provision covering the whole act.
+    if not law.provisions:
+        body = text.strip()
+        if body:
+            cid = f"{law.instrument_id}#full"
+            law.provisions.append(Provision(
+                canonical_id=cid, instrument_id=law.instrument_id,
+                instrument_key=law.instrument_key,
+                instrument_type=law.instrument_type,
+                fek_series=law.fek_series, fek_number=law.fek_number,
+                fek_date=law.fek_date,
+                article_no="", article_title=_first_line(body),
+                level="document", chunk_type="document",
+                hierarchy_path=law.instrument_id,
+                text_in_force=body, text_normalized=fold_for_bm25(body),
+                content_hash=hashlib.sha256(body.encode()).hexdigest()))
     return law

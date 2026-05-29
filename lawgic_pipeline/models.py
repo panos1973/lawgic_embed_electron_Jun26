@@ -38,6 +38,24 @@ def make_instrument_key(t: str, number: int, year: int) -> str:
     return f"{_PREFIX_KEY.get(t, 'N')}{number}/{year}"
 
 
+def make_decision_id(series: str, fek_number: str, year: int,
+                     item: Optional[int] = None) -> str:
+    """Citable id for FEK decisions, which lack a clean NUM/YEAR instrument number.
+
+    Built from the gazette coordinates (τεύχος + φύλλο + έτος) plus the
+    ΠΕΡΙΕΧΟΜΕΝΑ item index when a single FEK issue bundles several acts, e.g.
+    'Β΄913/2025#1'. Single-act issues drop the item suffix: 'Β΄734/2025'.
+    """
+    base = f"{series}΄{fek_number}/{year}"
+    return f"{base}#{item}" if item else base
+
+
+def make_decision_key(series: str, fek_number: str, year: int,
+                      item: Optional[int] = None) -> str:
+    base = f"{series}{fek_number}/{year}"
+    return f"{base}#{item}" if item else base
+
+
 def make_provision_id(instrument_id: str, article: str,
                       paragraph: Optional[str] = None) -> str:
     loc = f"αρ.{article}"

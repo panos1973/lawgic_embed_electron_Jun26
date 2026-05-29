@@ -11,13 +11,15 @@ from typing import Callable, Optional
 
 import config
 from state import State
-from models import Law, make_instrument_id, make_instrument_key, TYPE_NOMOS
+from models import (Law, make_instrument_id, make_instrument_key,
+                    make_decision_id, make_decision_key)
 from normalize import normalize_display
 import pipeline.extract as extract
 import pipeline.segment as segment
 import pipeline.enrich as enrich
 import pipeline.amend as amend
 import pipeline.delegate as delegate
+import pipeline.multiact as multiact
 import voyage_embed as ve
 import weaviate_io as wio
 
@@ -28,6 +30,59 @@ def _hash_file(path: str) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _build_law(seg, mh) -> Optional[Law]:
+    """Construct an identified Law from an act segment + the gazette masthead.
+
+    Returns None when the act cannot be given a stable canonical id (so the
+    caller routes it to review rather than inventing a colliding placeholder).
+    """
+    year = mh.get("year")
+    if seg.is_decision:
+        series = mh.get("fek_series") or ""
+        fek_no = mh.get("fek_number") or ""
+        if not (series and fek_no and year and seg.instrument_type):
+            return None
+        iid = make_decision_id(series, fek_no, year, seg.item)
+        ikey = make_decision_key(series, fek_no, year, seg.item)
+    else:
+        itype, number = seg.instrument_type, mh.get("number")
+        if not itype or number is None or year is None:
+            return None
+        iid = make_instrument_id(itype, number, year)
+        ikey = make_instrument_key(itype, number, year)
+    return Law(instrument_id=iid, instrument_key=ikey,
+               instrument_type=seg.instrument_type,
+               jurisdiction=config.DEFAULT_TENANT,
+               title=seg.title or mh.get("title", ""),
+               fek_series=mh.get("fek_series", ""),
+               fek_number=mh.get("fek_number", ""),
+               fek_date=mh.get("fek_date") or "")
+
+
+def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[Law]]:
+    """Run the full per-instrument spine for one act. Returns (status, law)."""
+    law = _build_law(seg, mh)
+    if law is None:
+        return "review", None
+    law = segment.segment(seg.text, law)
+    # Amend BEFORE classify/embed: consolidation rewrites text_in_force to the
+    # in-force version, which is what domain signal, summary and vectors must use.
+    law = amend.extract_amendments(law)
+    law = amend.consolidate(law)
+    law = delegate.extract_delegations(law)
+    emit("classify")
+    law = enrich.classify_domain(law)
+    law = enrich.enrich_llm(law)                       # no-op without LLM key
+    emit("embed")
+    vectors = ve.embed_law_chunks(law.ordered_texts())
+    emit("load")
+    wio.load_document(client, law)
+    wio.load_law(client, law, vectors)
+    wio.load_amendments(client, law.amendments, source_law=law)
+    wio.load_delegations(client, law.delegations, source_law=law)
+    return "done", law
 
 
 def process_document(client, st: State, path: str,
@@ -52,49 +107,41 @@ def process_document(client, st: State, path: str,
         text = normalize_display(ex.text)
         mh = ex.masthead or {}
 
-        # The instrument identity (type + number + year) is the backbone of the
-        # canonical id and therefore of the idempotent UUID. If we cannot identify
-        # the law, do NOT invent a placeholder id (that collides across docs) —
-        # route to human review instead.
-        itype, number, year = mh.get("instrument_type"), mh.get("number"), mh.get("year")
-        if not itype or number is None or year is None:
-            reason = ("could not identify instrument from masthead "
-                      f"(type={itype}, number={number}, year={year})")
+        # One gazette PDF may contain N instruments: primary legislation is a
+        # single act, but a decision issue (any Β΄, or an Α΄ ministerial section)
+        # bundles several, each split out and identified by its issuer.
+        emit("segment")
+        acts = multiact.split_acts(text, mh)
+        if not acts:
+            reason = ("could not identify any instrument from masthead "
+                      f"(type={mh.get('instrument_type')}, "
+                      f"number={mh.get('number')}, year={mh.get('year')})")
             st.set_status(doc_id, "review", stage="extract", error=reason)
             emit("review", reason)
             return "review"
 
-        emit("segment")
-        law = Law(instrument_id=make_instrument_id(itype, number, year),
-                  instrument_key=make_instrument_key(itype, number, year),
-                  instrument_type=itype, jurisdiction=config.DEFAULT_TENANT,
-                  title=mh.get("title", ""), fek_series=mh.get("fek_series", ""),
-                  fek_number=mh.get("fek_number", ""), fek_date=mh.get("fek_date") or "")
-        law = segment.segment(text, law)
-
-        # Amend BEFORE classify/enrich/embed: consolidation rewrites text_in_force
-        # to the in-force version, and everything downstream (domain signal, LLM
-        # summary, vectors) must reflect the consolidated text, not as-enacted.
+        # Process each act through the full spine. Amend runs before embed so the
+        # consolidated (in-force) text is what gets vectorised.
         emit("amend")
-        law = amend.extract_amendments(law)
-        law = amend.consolidate(law)
-        law = delegate.extract_delegations(law)
+        done, review, total_prov = 0, 0, 0
+        for seg in acts:
+            status, law = _process_act(client, seg, mh, emit)
+            if status == "done":
+                done += 1
+                total_prov += len(law.provisions)
+            else:
+                review += 1
 
-        emit("classify")
-        law = enrich.classify_domain(law)
-        law = enrich.enrich_llm(law)                        # no-op without LLM key
+        if done == 0:
+            reason = f"{review} act(s) could not be identified for ingestion"
+            st.set_status(doc_id, "review", stage="load", error=reason)
+            emit("review", reason)
+            return "review"
 
-        emit("embed")
-        vectors = ve.embed_law_chunks(law.ordered_texts())
-
-        emit("load")
-        wio.load_document(client, law)
-        wio.load_law(client, law, vectors)
-        wio.load_amendments(client, law.amendments, source_law=law)
-        wio.load_delegations(client, law.delegations, source_law=law)
-
-        st.set_status(doc_id, "done", stage="load", confidence=1.0)
-        emit("done", f"{len(law.provisions)} provisions")
+        emit("done", f"{done} instrument(s), {total_prov} provisions"
+                     + (f", {review} to review" if review else ""))
+        st.set_status(doc_id, "done", stage="load",
+                      confidence=1.0 if review == 0 else 0.8)
         return "done"
 
     except NotImplementedError as e:

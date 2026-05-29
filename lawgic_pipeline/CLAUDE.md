@@ -44,9 +44,21 @@ PARTIAL/EXT:     enrich_llm (summary/keywords/EUROVOC/ΔΚΝ — real, skips w/o
 Instrument types: FEK Α΄ ν./π.δ./Π.Ν.Π./ψήφισμα/Κανονισμός Βουλής/α.ν./ν.δ.;
 FEK Β΄ ΥΑ/ΚΥΑ/κανονιστική απόφαση/απόφαση Διοικητή-Γ.Γ./Περιφερειάρχη-ΟΤΑ/ΝΠΔΔ.
 
-Tests: lawgic_pipeline/tests/ — 51 passing (masthead, segment, amend, enrich,
-delegate, weaviate_io loaders, extract integration, full-spine e2e, validate
-harness). Run: `python -m pytest tests/ -q`.
+Real-FEK hardening (validated against samplefek/ corpus):
+  Phase 1 — pipeline/normalize.py: token-aware Latin->Greek homoglyph repair
+    (NOMOΣ->ΝΟΜΟΣ), ∆->Δ, (cid:NNN) stripping, furniture/boilerplate removal;
+    sidecar column-aware extraction (two-column reading order). Fixed masthead
+    type=None and scrambled article order on real laws.
+  Phase 2 — pipeline/multiact.py: one gazette PDF -> N instruments. Primary laws
+    pass through; decision issues split on Αριθμ. headers, typed by issuer
+    (Υπουργοί->ΚΥΑ, Υπουργός->ΥΑ, Γραμματέας/Διοικητής->Διοικητή, Περιφερειάρχης/
+    Δήμαρχος->Περιφ., Σύγκλητος/Δ.Σ.->ΝΠΔΔ, Αρχή->κανονιστική). Decision ids via
+    make_decision_id (Β΄913/2025#1). segment.py single-provision fallback for
+    decisions with no Άρθρο. orchestrator loops over acts.
+
+Tests: lawgic_pipeline/tests/ — 66 passing (masthead, segment, amend, enrich,
+delegate, normalize, multiact, weaviate_io loaders, extract integration,
+full-spine e2e, validate harness). Run: `python -m pytest tests/ -q`.
 
 ## Remaining (where accuracy is still won)
 1. trained ΔΚΝ classifier (GLC/Raptarchis47k) behind classify_dkn.
