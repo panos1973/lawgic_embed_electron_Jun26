@@ -102,6 +102,28 @@ def test_consolidate_leaves_external_targets_untouched():
     assert law.provisions[0].text_in_force == before
 
 
+def test_fek_reference_decision_target():
+    # target is a prior decision named only by its gazette ref + date
+    w = "του άρθρου 18 της υπ’ αρ. 3/100/21.12.2023 (Β΄ 7738) απόφασης"
+    tid, scope, resolved = _resolve_reference(w, "Β΄879/2024")
+    assert tid == "Β΄7738/2023#αρ.18"
+    assert resolved is True
+
+
+def test_fek_reference_needs_date_for_year():
+    # without a date we cannot derive the year -> fall back to self (default)
+    w = "του άρθρου 5 (Β΄ 7738) απόφασης"
+    tid, scope, resolved = _resolve_reference(w, "Β΄879/2024")
+    assert tid.startswith("Β΄879/2024")        # default instrument, not the FEK ref
+
+
+def test_law_fek_in_parens_not_treated_as_target():
+    # "ν. 4622/2019 ... (Α' 133)": the law is the target, (Α'133) is just its FEK
+    w = "του άρθρου 67 του ν. 4622/2019 (Α’ 133)"
+    tid, scope, resolved = _resolve_reference(w, "x")
+    assert tid == "ν.4622/2019#αρ.67"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

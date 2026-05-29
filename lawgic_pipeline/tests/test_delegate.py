@@ -94,6 +94,31 @@ def test_no_reference_no_edge():
     assert law.delegations == []
 
 
+def test_preamble_enabling_full_text():
+    # codifying π.δ.: enabling stated in «Έχοντας υπόψη», before the first Άρθρο
+    law = Law(instrument_id="π.δ.62/2025", instrument_key="PD62/2025",
+              instrument_type=TYPE_PD, title="Κώδικας Εργατικού Δικαίου")
+    full = ("ΠΡΟΕΔΡΙΚΟ ΔΙΑΤΑΓΜΑ ΥΠ' ΑΡΙΘΜ. 62\nΈχοντας υπόψη:\n"
+            "1. Την παρ. 6 του άρθρου 67 του ν. 4622/2019, αποφασίζουμε:\n"
+            "Άρθρο 1\nσύμφωνα με τις διατάξεις του άρθρου 5 του ν. 9999/2000 ...")
+    extract_delegations(law, full_text=full)
+    ids = [d.enabling_id for d in law.delegations]
+    assert ids == ["ν.4622/2019#αρ.67.παρ.6"]      # preamble only, not the body ref
+
+
+def test_body_cross_reference_not_a_delegation():
+    # a citation deep in an article body (after the operative verb) must NOT emit
+    law = _impl_law("αποφασίζει τα εξής. Άρθρο 1. σύμφωνα με τις διατάξεις "
+                    "του άρθρου 5 του ν. 4412/2016 ισχύει ο κανόνας.")
+    extract_delegations(law)
+    assert law.delegations == []
+
+
+def test_pd_is_now_an_implementing_type():
+    from pipeline.delegate import IMPLEMENTING_TYPES
+    assert TYPE_PD in IMPLEMENTING_TYPES
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

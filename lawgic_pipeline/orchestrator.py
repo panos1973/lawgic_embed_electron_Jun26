@@ -20,6 +20,7 @@ import pipeline.enrich as enrich
 import pipeline.amend as amend
 import pipeline.delegate as delegate
 import pipeline.multiact as multiact
+import pipeline.refs as refs
 import voyage_embed as ve
 import weaviate_io as wio
 
@@ -71,7 +72,8 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
     # in-force version, which is what domain signal, summary and vectors must use.
     law = amend.extract_amendments(law)
     law = amend.consolidate(law)
-    law = delegate.extract_delegations(law)
+    law = delegate.extract_delegations(law, full_text=seg.text)
+    law = refs.extract_external_refs(law)
     emit("classify")
     law = enrich.classify_domain(law)
     law = enrich.enrich_llm(law)                       # no-op without LLM key

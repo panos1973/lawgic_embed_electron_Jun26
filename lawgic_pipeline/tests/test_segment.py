@@ -8,6 +8,23 @@ from pipeline.segment import segment  # noqa: E402
 from models import Law, TYPE_NOMOS  # noqa: E402
 
 
+def test_spelled_ordinal_articles():
+    law = Law(instrument_id="Π.Ν.Π.1/2023", instrument_key="x",
+              instrument_type=TYPE_NOMOS)
+    txt = "Άρθρο πρώτο\nΠρώτη ρύθμιση.\nΆρθρο δεύτερο\nΈναρξη ισχύος.\n"
+    law = segment(txt, law)
+    assert [p.article_no for p in law.provisions] == ["πρώτο", "δεύτερο"]
+
+
+def test_roman_numeral_articles():
+    law = Law(instrument_id="ν.5011/2023", instrument_key="x",
+              instrument_type=TYPE_NOMOS)
+    # post-normalization XII->ΧΙΙ, XIII->ΧΙΙΙ (Greek homoglyphs)
+    txt = "Άρθρο ΧΙΙ\nΕπίλυση διαφορών.\nΆρθρο ΧΙΙΙ\nΥπογραφή.\n"
+    law = segment(txt, law)
+    assert [p.article_no for p in law.provisions] == ["ΧΙΙ", "ΧΙΙΙ"]
+
+
 def _law():
     return Law(instrument_id="ν.5090/2024", instrument_key="N5090/2024",
                instrument_type=TYPE_NOMOS)

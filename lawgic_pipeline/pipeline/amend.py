@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 
 from models import (Law, AmendmentOp, TYPE_NOMOS, TYPE_PD,
-                    make_instrument_id, make_provision_id)
+                    make_instrument_id, make_provision_id, make_decision_id)
 from normalize import fold_for_bm25
 
 # Amending verb -> canonical op. Order matters only for reporting; each provision
@@ -45,6 +45,11 @@ _REF_PAR = re.compile(r"παρ(?:άγραφος|αγράφου|αγράφων|\.
 _REF_ART = re.compile(r"άρθρ(?:ο|ου|α|ων)\s*(\d+[Α-Ωα-ω]?)")
 _REF_INSTR = re.compile(
     r"(?P<type>ν\.|π\.?\s*δ\.|νόμ\w*|προεδρικ\w*)?\s*(?P<num>\d{1,5})\s*/\s*(?P<year>\d{4})")
+# Target identified only by its gazette reference — a prior decision, e.g.
+# "της υπ' αρ. 3/100/21.12.2023 (Β΄ 7738) απόφασης". The date gives the year, the
+# parenthesis gives τεύχος + φύλλο. Used only when no ν./π.δ. number is present.
+_REF_FEK = re.compile(r"\(\s*(?P<ser>[ΑΒΓΔΕ])['΄ʼ’]\s*(?P<fek>\d{2,6})\s*\)")
+_REF_FEKDATE = re.compile(r"\b\d{1,2}[./]\d{1,2}[./](?P<y>\d{4})\b")
 
 # Quoted replacement text: Greek guillemets or straight/smart double quotes.
 _QUOTED = re.compile(r"[«\"“](.+?)[»\"”]", re.DOTALL)
@@ -64,19 +69,28 @@ def _resolve_reference(window: str, default_instrument: str) -> tuple[str, str, 
     case = _REF_CASE.search(window)
     instr = _REF_INSTR.search(window)
 
+    named = bool(instr)
     if instr:
         t = (instr.group("type") or "").lower()
         itype = TYPE_PD if t.startswith("π") or t.startswith("προ") else TYPE_NOMOS
         instrument_id = make_instrument_id(itype, int(instr.group("num")),
                                            int(instr.group("year")))
     else:
-        instrument_id = default_instrument
+        # No ν./π.δ. number: the target may be a prior decision named by its
+        # gazette reference "(Β΄ 7738)" with a nearby date for the year.
+        fek = _REF_FEK.search(window)
+        fdate = _REF_FEKDATE.search(window)
+        if fek and fdate:
+            instrument_id = make_decision_id(fek.group("ser"), fek.group("fek"),
+                                             int(fdate.group("y")))
+            named = True
+        else:
+            instrument_id = default_instrument
 
     if not art:
         # No article anchor -> document-level (e.g. whole-law repeal) or unresolved.
         scope = "document"
-        resolved = bool(instr)
-        return instrument_id, scope, resolved
+        return instrument_id, scope, named
 
     article = art.group(1)
     paragraph = par.group(1) if par else None

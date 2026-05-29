@@ -55,9 +55,20 @@ Real-FEK hardening (validated against samplefek/ corpus):
     Δήμαρχος->Περιφ., Σύγκλητος/Δ.Σ.->ΝΠΔΔ, Αρχή->κανονιστική). Decision ids via
     make_decision_id (Β΄913/2025#1). segment.py single-provision fallback for
     decisions with no Άρθρο. orchestrator loops over acts.
+  Phase 3 — edge refinements: cite-based delegation (incl. codifying π.δ.; search
+    restricted to the act header «Έχοντας υπόψη»+operative for precision). amend.py
+    resolves decision targets named by gazette ref ("(Β΄ 7738)"+date ->
+    Β΄7738/2023). pipeline/refs.py tags EU-law references (ΕΕ:Κανονισμός 2022/868)
+    into provision.cites. segment.py adds spelled-ordinal (Άρθρο πρώτο/μόνο) and
+    Roman-numeral (Άρθρο XII) article anchors. ΜΕΡΟΣ/ΚΕΦΑΛΑΙΟ tier already worked
+    post-Phase-1 (verified: ν.5086 -> ΜΕΡΟΣ Α' > ΚΕΦΑΛΑΙΟ Α' > Άρθρο 1).
+  Phase 4 (planned, not built) — OCR via Azure DI: selective (scanned/CID/table
+    pages only), rasterize+OCR for CID-encoded born-digital pages (Σύνταγμα-class),
+    guarded behind DI_ENDPOINT/DI_KEY. Known issue: codification π.δ. with an
+    end correspondence-table over-segments (Άρθρο anchor) — to be bounded.
 
-Tests: lawgic_pipeline/tests/ — 66 passing (masthead, segment, amend, enrich,
-delegate, normalize, multiact, weaviate_io loaders, extract integration,
+Tests: lawgic_pipeline/tests/ — 78 passing (masthead, segment, amend, enrich,
+delegate, normalize, multiact, refs, weaviate_io loaders, extract integration,
 full-spine e2e, validate harness). Run: `python -m pytest tests/ -q`.
 
 ## Remaining (where accuracy is still won)

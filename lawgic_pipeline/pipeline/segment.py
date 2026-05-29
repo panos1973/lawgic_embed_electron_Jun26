@@ -29,6 +29,13 @@ _ANCHORS = [
     ("chapter", re.compile(r"(?m)^\s*ΚΕΦΑΛΑΙΟ\s+" + _LABEL + r"\s*$")),
     ("section", re.compile(r"(?m)^\s*ΤΜΗΜΑ\s+" + _LABEL + r"\s*$")),
     ("article", re.compile(r"(?m)^\s*Άρθρο\s+(\d+[Α-Ωα-ω]?)\.?\s*$")),
+    # spelled-out ordinals (κύρωση/ΠΝΠ/short laws): "Άρθρο πρώτο", "Άρθρο μόνο"
+    ("article", re.compile(
+        r"(?im)^\s*Άρθρο\s+(πρώτο|δεύτερο|τρίτο|τέταρτο|πέμπτο|έκτο|έβδομο|όγδοο|"
+        r"ένατο|δέκατο|μόνο)\.?\s*$")),
+    # Roman numerals (international-treaty articles): "Άρθρο XII" — post-glyph
+    # normalization these mix Greek (Ι Χ Μ) and Latin (V L C D) homoglyphs.
+    ("article", re.compile(r"(?m)^\s*Άρθρο\s+([ΙΧΜIVXLCDM]{2,7})\.?\s*$")),
     ("annex",   re.compile(r"(?m)^\s*ΠΑΡΑΡΤΗΜΑ\s*" + _LABEL + r"?\s*$")),
 ]
 

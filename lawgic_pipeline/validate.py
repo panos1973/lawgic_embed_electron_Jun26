@@ -37,6 +37,7 @@ import pipeline.segment as segment
 import pipeline.enrich as enrich
 import pipeline.amend as amend
 import pipeline.delegate as delegate
+import pipeline.refs as refs
 from models import Law, make_instrument_id, make_instrument_key
 
 # A provision body shorter than this is suspicious (segmentation likely split on a
@@ -118,6 +119,7 @@ def validate_pdf(path: str, use_azure: bool = True) -> dict:
     law = amend.extract_amendments(law)
     law = amend.consolidate(law)
     law = delegate.extract_delegations(law)
+    law = refs.extract_external_refs(law)
     law = enrich.classify_domain(law)
 
     arts = [p for p in law.provisions if p.chunk_type == "article"]
