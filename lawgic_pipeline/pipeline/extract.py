@@ -104,8 +104,12 @@ def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
                 "configured, using pdfplumber markdown tables")
         text = "\n\n".join(m for m in pages_markdown if m)
 
+    # Masthead is parsed on the full text (it needs the cover block); the body
+    # text handed downstream then has the repeating page furniture stripped.
     masthead = parse_masthead(text)
     warnings.extend(f"masthead: {w}" for w in masthead.get("warnings", []))
+    from pipeline.normalize import strip_furniture
+    text = strip_furniture(text)
 
     return ExtractResult(
         text=text,

@@ -88,6 +88,12 @@ _SERIES = {
 }
 _SERIES_RE = re.compile(
     r"ΤΕΥΧΟΣ\s+(ΠΡΩΤΟ|ΔΕΥΤΕΡΟ|ΤΡΙΤΟ|ΤΕΤΑΡΤΟ|ΠΕΜΠΤΟ)", re.IGNORECASE)
+# Fallback: the running page header carries the abbreviated form "Τεύχος Α'"
+# (the letter may be a Latin homoglyph A/B/E). Used when the full τεύχος word was
+# separated by two-column reconstruction.
+_SERIES_ABBR_RE = re.compile(r"Τε[υύ]χος\s+([ΑΒΓΔΕABEZH])\s*['΄ʼ’]", re.IGNORECASE)
+_SERIES_ABBR = {"Α": "Α", "A": "Α", "Β": "Β", "B": "Β", "Γ": "Γ",
+                "Δ": "Δ", "Ε": "Ε", "E": "Ε"}
 
 # "Αρ. Φύλλου 52" / "Αριθμός Φύλλου 52" / "Αριθμ. Φύλλου 52".
 _FEK_NO_RE = re.compile(
@@ -181,7 +187,12 @@ def parse_masthead(text: str) -> dict:
     if sm:
         fek_series = _SERIES.get(sm.group(1).upper(), "")
     else:
-        warnings.append("fek_series (τεύχος) not found")
+        # fall back to the abbreviated running-header form anywhere in the doc
+        am = _SERIES_ABBR_RE.search(text)
+        if am:
+            fek_series = _SERIES_ABBR.get(am.group(1).upper(), "")
+        if not fek_series:
+            warnings.append("fek_series (τεύχος) not found")
     fek_number = ""
     fm = _FEK_NO_RE.search(head)
     if fm:

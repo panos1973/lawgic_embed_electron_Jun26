@@ -31,7 +31,50 @@ import sys
 _TEXT_CHAR_THRESHOLD = 80
 
 
-def _table_to_markdown(rows: list[list]) -> str:
+def _line_text(words: list[dict]) -> str:
+    """Join words on one visual line (already x-sorted) into a string."""
+    return " ".join(w["text"] for w in words)
+
+
+def _group_lines(words: list[dict], ytol: float = 3.0) -> list[str]:
+    """Group words into visual lines by 'top', preserving reading order."""
+    ws = sorted(words, key=lambda w: (round(w["top"] / ytol), w["x0"]))
+    lines, cur, cur_top = [], [], None
+    for w in ws:
+        if cur_top is None or abs(w["top"] - cur_top) <= ytol:
+            cur.append(w)
+            cur_top = w["top"] if cur_top is None else cur_top
+        else:
+            lines.append(_line_text(sorted(cur, key=lambda x: x["x0"])))
+            cur, cur_top = [w], w["top"]
+    if cur:
+        lines.append(_line_text(sorted(cur, key=lambda x: x["x0"])))
+    return lines
+
+
+def _column_text(page) -> str:
+    """Reading-order text with two-column reconstruction when a gutter exists.
+
+    FEK body pages are symmetric two-column; pdfplumber's extract_text() reads
+    line-by-line and so interleaves the columns. We detect a central gutter (a
+    vertical band that almost no word crosses) and, when found, emit the whole
+    left column then the whole right column. Full-width lines (mastheads, titles,
+    tables) keep ~all words crossing the gutter, so such pages stay single-flow.
+    """
+    try:
+        words = page.extract_words(use_text_flow=False)
+    except Exception:
+        return page.extract_text() or ""
+    if not words:
+        return page.extract_text() or ""
+    g = page.width / 2.0
+    crossing = sum(1 for w in words if w["x0"] < g < w["x1"])
+    left = [w for w in words if w["x1"] <= g]
+    right = [w for w in words if w["x0"] >= g]
+    # Two-column only if the gutter is genuinely clear and both sides populated.
+    if (crossing / len(words) < 0.04 and len(left) >= 8 and len(right) >= 8):
+        return "\n".join(_group_lines(left) + _group_lines(right))
+    return page.extract_text() or ""
     """Render a pdfplumber table (list of row-lists) as a GitHub markdown table.
 
     pdfplumber yields None for empty cells; normalize to "" and collapse internal
@@ -62,13 +105,23 @@ def detect(path: str) -> dict:
     warnings: list[str] = []
     text_pages = 0
 
+    try:
+        from pipeline.normalize import normalize_glyphs, cid_ratio
+    except Exception:  # noqa: BLE001 — sidecar must run even if import path differs
+        normalize_glyphs = lambda t: t            # noqa: E731
+        cid_ratio = lambda t: 0.0                 # noqa: E731
+
     with pdfplumber.open(path) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
             try:
-                text = page.extract_text() or ""
+                text = _column_text(page)
             except Exception as e:  # noqa: BLE001 — one bad page must not abort
                 text = ""
                 warnings.append(f"page {i}: text extraction failed ({e})")
+            # CID-heavy page has no usable text layer -> treat as scanned (OCR).
+            if cid_ratio(text) > 0.5:
+                text = ""
+            text = normalize_glyphs(text)
 
             # table detection — guarded; find_tables can throw on odd geometry
             tables = []
