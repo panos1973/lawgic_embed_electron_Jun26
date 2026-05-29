@@ -24,17 +24,27 @@ content_hash dedup and resume.
 REAL & working:  config, state (SQLite), models + canonical IDs + citation parser,
                  normalize (glyphs/dehyphenation/homoglyph/BM25 fold), voyage embed,
                  weaviate loader (5 collections, tenant-aware, idempotent UUIDs),
-                 orchestrator spine, CLI, cited-code domain classifier.
-PARTIAL:         segment (Άρθρο splitter only — needs ΜΕΡΟΣ/ΚΕΦΑΛΑΙΟ/παρ/annex),
-                 amend (verb + quoted-text detection — needs target resolution +
-                 consolidation to text_in_force + version chain).
-STUB:            extract (wire pdfplumber sidecar + Azure DI table-page upgrade),
-                 enrich_llm (summary/keywords/EUROVOC/ΔΚΝ), sidecar/pdf_extract.
+                 orchestrator spine, CLI.
+                 extract (pdfplumber sidecar + Azure DI table-page splice) +
+                 masthead parser -> real instrument identity (fixes UUID collision).
+                 segment (anchor-based ΜΕΡΟΣ/ΚΕΦΑΛΑΙΟ/ΤΜΗΜΑ hierarchy + annex,
+                 article-level provisions with hierarchy_path).
+                 amend (verb detect + nested-genitive target resolution + scope +
+                 in-law consolidation to text_in_force, version bump).
+                 domain classifier (layered cited-code + folded-keyword fallback).
+PARTIAL/EXT:     enrich_llm (summary/keywords/EUROVOC/ΔΚΝ — real, skips w/o key).
+                 cross-law consolidation (in-law done; cross-law = store-level pass).
+                 classify_dkn (hook for trained Ραπτάρχης/GLC model; corpus not bundled).
+                 loader populates flat + article + amendment; LawDocument/Delegation TBD.
 
-## The three hard pieces (where accuracy is won)
-1. segment.py  — full morphology parser -> Law/Provision tree.
-2. amend.py    — amendment target resolution + consolidation to as-in-force.
-3. enrich.py   — domain classifier (train on GLC/Raptarchis47k for domain_dkn).
+Tests: lawgic_pipeline/tests/ — 32 passing (masthead, segment, amend, enrich,
+extract integration, full-spine e2e dry run). Run: `python -m pytest tests/ -q`.
+
+## Remaining (where accuracy is still won)
+1. cross-law consolidation pass at the store level (apply external amend ops).
+2. trained ΔΚΝ classifier (GLC/Raptarchis47k) behind classify_dkn.
+3. populate Jun2026LawDocument + Jun2026Delegation collections.
+4. real-FEK validation: run a batch of genuine gazette PDFs through the spine.
 
 ## Non-negotiables
 - Insert with .with_tenant("gr") (done in weaviate_io) — never omit.
