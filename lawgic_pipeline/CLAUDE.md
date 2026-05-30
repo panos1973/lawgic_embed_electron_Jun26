@@ -40,13 +40,20 @@ REAL & working:  config, state (SQLite), models + canonical IDs + citation parse
                  app's detection-schema: instrument_type + title signals -> the 20
                  categories NOMOS_AMENDMENT/_CODIFICATION/_RATIFICATION/_SUBSTANTIVE,
                  PD_*, KYA, YA_*, PNP, ...; deterministic, written to LawDocument).
+                 ΔΚΝ (Ραπτάρχης) classifier — deterministic top-level subject
+                 volumes into domain_dkn (maps the cited-code/keyword signals to
+                 canonical volume names + ΔΚΝ-only volumes: agriculture, shipping,
+                 ecclesiastical, public works, local government). Offline; a
+                 trained GLC model can augment/replace behind the same field.
                  delegate (FEK Β΄ implementing acts -> enabling-provision edges).
                  loader populates all 5 collections (flat, article, document,
                  amendment, delegation); validate.py offline accuracy harness.
-PARTIAL/EXT:     enrich_llm (summary/keywords/EUROVOC/ΔΚΝ — real, skips w/o key).
+PARTIAL/EXT:     enrich_llm (summary/keywords/EUROVOC + extra ΔΚΝ — real, merges
+                 on top of the deterministic ΔΚΝ volumes; skips w/o key).
                  cross-law consolidation (in-law done; cross-law = store-level pass,
                  consolidate_cross_law + `cli consolidate`).
-                 classify_dkn (hook for trained Ραπτάρχης/GLC model; corpus not bundled).
+                 trained ΔΚΝ model (GLC/Raptarchis47k) — would slot behind
+                 classify_dkn to augment the deterministic volumes; corpus not bundled.
                  delegation graph cross-refs (scalar props written; ref-linking TBD).
 
 Instrument types: FEK Α΄ ν./π.δ./Π.Ν.Π./ψήφισμα/Κανονισμός Βουλής/α.ν./ν.δ.;
@@ -89,13 +96,14 @@ Real-FEK hardening (validated against samplefek/ corpus):
     binary so the Windows .exe needs no Python install; adapt the old app's
     windows-latest build-and-release CI.
 
-Tests: lawgic_pipeline/tests/ — 101 passing (masthead, segment, amend, enrich
-domain + document_category, delegate, normalize, quality, multiact, refs,
+Tests: lawgic_pipeline/tests/ — 112 passing (masthead, segment, amend, enrich
+domain + document_category + dkn, delegate, normalize, quality, multiact, refs,
 weaviate_io loaders, extract integration, full-spine e2e, validate harness).
 Run: `python -m pytest tests/ -q`.
 
 ## Remaining (where accuracy is still won)
-1. trained ΔΚΝ classifier (GLC/Raptarchis47k) behind classify_dkn.
+1. trained ΔΚΝ model (GLC/Raptarchis47k) to augment the deterministic ΔΚΝ
+   volumes behind classify_dkn (needs the labelled corpus, not bundled).
 2. delegation/amendment graph cross-reference linking (endpoints exist -> link).
 3. real-FEK validation: run genuine gazette PDFs through `python validate.py`.
 4. confirm target Weaviate cluster (code default vs env WEAVIATE_URL differ).

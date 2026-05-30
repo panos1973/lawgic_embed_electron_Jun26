@@ -7,12 +7,13 @@ Domain classification is deterministic and layered:
   2. KEYWORD_DOMAIN — accent-folded keyword fallback, applied only when the
      cited-code signal found nothing, so an uncited provision still gets a domain.
 
-The trained domain_dkn classifier (GLC / Raptarchis47k Ραπτάρχης labels) is the
-documented next layer; it requires the labelled corpus and is wired through
-enrich_llm's `dkn` field today. The hook `classify_dkn` below is the explicit
-extension point for a local trained model when that dataset is available.
+domain_dkn (ΔΚΝ / Ραπτάρχης subject volumes) is now classified deterministically
+too — classify_dkn maps the same cited-code/keyword signals to canonical
+top-level volume names, so the field is populated offline. A trained
+GLC/Raptarchis47k model can later augment/replace it behind the same field, and
+LLM `dkn` predictions still merge on top when a provider key is set.
 
-Summary / keywords / EUROVOC / ΔΚΝ via the configured LLM are real but skip
+Summary / keywords / EUROVOC / extra ΔΚΝ via the configured LLM are real but skip
 silently when no provider key is set, so the pipeline never blocks on them.
 """
 from __future__ import annotations
@@ -88,30 +89,120 @@ def _add(p, dom):
         p.legal_domain.append(dom)
 
 
+def _domains_for(hay: str) -> list[str]:
+    """Return the ordered legal_domain labels a text matches.
+
+    Layer 1 = cited-code/framework patterns (high precision); the folded-keyword
+    fallback fires only when no cited-code pattern matched. Shared by
+    classify_domain and the ΔΚΝ classifier so both read the same signals.
+    """
+    doms: list[str] = []
+    matched = False
+    for pat, dom in CODE_DOMAIN.items():
+        if re.search(pat, hay, re.IGNORECASE):
+            if dom not in doms:
+                doms.append(dom)
+            matched = True
+    if not matched:
+        folded = fold_for_bm25(hay)
+        for kw, dom in KEYWORD_DOMAIN.items():
+            if kw in folded and dom not in doms:
+                doms.append(dom)
+    return doms
+
+
 def classify_domain(law: Law) -> Law:
     """Layer 1 (cited-code) with a folded-keyword fallback per provision."""
     for p in law.provisions:
         hay = f"{law.title}\n{p.text_in_force}"
-        matched = False
-        for pat, dom in CODE_DOMAIN.items():
-            if re.search(pat, hay, re.IGNORECASE):
-                _add(p, dom)
-                matched = True
-        if not matched:
-            folded = fold_for_bm25(hay)
-            for kw, dom in KEYWORD_DOMAIN.items():
-                if kw in folded:
-                    _add(p, dom)
+        for dom in _domains_for(hay):
+            _add(p, dom)
     return law
 
 
-def classify_dkn(law: Law) -> Law:
-    """Extension point for the trained ΔΚΝ (Ραπτάρχης) classifier.
+# ── ΔΚΝ (Ραπτάρχης) subject taxonomy — deterministic top-level volumes ──
+# The Διαρκής Κώδικας Νομοθεσίας (Ραπτάρχης) is the official thematic index of
+# Greek law. This populates domain_dkn with its canonical top-level volume names
+# (Greek), deterministically and offline — the same layered approach as
+# legal_domain. A trained model on the GLC/Raptarchis47k corpus can later augment
+# or replace this behind the same field; until that corpus is available, this is
+# the real signal (and LLM `dkn` predictions still merge on top in enrich_llm).
 
-    No-op today: the labelled GLC/Raptarchis47k corpus is not bundled, so domain_dkn
-    is populated via the LLM (`dkn` field) in enrich_llm. When a local trained model
-    is available, load it here and append predictions to p.domain_dkn.
+# coarse legal_domain label -> ΔΚΝ top-level volume (canonical Greek name)
+_DOMAIN_TO_DKN = {
+    "criminal": "ΠΟΙΝΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "criminal_procedure": "ΠΟΙΝΙΚΗ ΔΙΚΟΝΟΜΙΑ",
+    "civil": "ΑΣΤΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "civil_procedure": "ΠΟΛΙΤΙΚΗ ΔΙΚΟΝΟΜΙΑ",
+    "labor": "ΕΡΓΑΤΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "tax": "ΦΟΡΟΛΟΓΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "public_procurement": "ΔΗΜΟΣΙΕΣ ΣΥΜΒΑΣΕΙΣ",
+    "data_protection": "ΠΡΟΣΤΑΣΙΑ ΠΡΟΣΩΠΙΚΩΝ ΔΕΔΟΜΕΝΩΝ",
+    "corporate": "ΕΜΠΟΡΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "insolvency": "ΕΜΠΟΡΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "customs": "ΤΕΛΩΝΕΙΑΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "environmental": "ΠΕΡΙΒΑΛΛΟΝΤΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "energy": "ΕΝΕΡΓΕΙΑ",
+    "administrative": "ΔΙΟΙΚΗΤΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "commercial": "ΕΜΠΟΡΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "constitutional": "ΣΥΝΤΑΓΜΑΤΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "eu_law": "ΔΙΕΘΝΕΙΣ ΣΧΕΣΕΙΣ",
+    "social_security": "ΚΟΙΝΩΝΙΚΗ ΑΣΦΑΛΙΣΗ",
+    "health": "ΥΓΕΙΟΝΟΜΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "education": "ΕΚΠΑΙΔΕΥΤΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "transport": "ΜΕΤΑΦΟΡΕΣ ΚΑΙ ΕΠΙΚΟΙΝΩΝΙΕΣ",
+    "digital": "ΗΛΕΚΤΡΟΝΙΚΗ ΔΙΑΚΥΒΕΡΝΗΣΗ",
+    "defense": "ΕΘΝΙΚΗ ΑΜΥΝΑ",
+    "immigration": "ΑΛΛΟΔΑΠΟΙ ΚΑΙ ΜΕΤΑΝΑΣΤΕΥΣΗ",
+}
+
+# ΔΚΝ volumes with no legal_domain counterpart — matched directly by folded
+# keyword. Keys are folded at module load (accents stripped, ς->σ) so they are
+# written here in natural Greek spelling.
+_DKN_EXTRA_RAW = {
+    "γεωργικ": "ΓΕΩΡΓΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "αγροτικ": "ΓΕΩΡΓΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "καλλιεργ": "ΓΕΩΡΓΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "ναυτιλ": "ΕΜΠΟΡΙΚΗ ΝΑΥΤΙΛΙΑ",
+    "πλοίο": "ΕΜΠΟΡΙΚΗ ΝΑΥΤΙΛΙΑ",
+    "λιμεν": "ΕΜΠΟΡΙΚΗ ΝΑΥΤΙΛΙΑ",
+    "εκκλησ": "ΕΚΚΛΗΣΙΑΣΤΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "μητροπόλ": "ΕΚΚΛΗΣΙΑΣΤΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "ιερά σύνοδο": "ΕΚΚΛΗΣΙΑΣΤΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    "δημόσια έργα": "ΔΗΜΟΣΙΑ ΕΡΓΑ",
+    "οδοποιί": "ΔΗΜΟΣΙΑ ΕΡΓΑ",
+    "τοπικής αυτοδιοίκησης": "ΟΡΓΑΝΙΣΜΟΙ ΤΟΠΙΚΗΣ ΑΥΤΟΔΙΟΙΚΗΣΗΣ",
+    "δημοτικό συμβούλιο": "ΟΡΓΑΝΙΣΜΟΙ ΤΟΠΙΚΗΣ ΑΥΤΟΔΙΟΙΚΗΣΗΣ",
+    "περιφερειάρχ": "ΟΡΓΑΝΙΣΜΟΙ ΤΟΠΙΚΗΣ ΑΥΤΟΔΙΟΙΚΗΣΗΣ",
+}
+_DKN_EXTRA = {fold_for_bm25(k): v for k, v in _DKN_EXTRA_RAW.items()}
+
+# all volume labels the deterministic classifier can emit (for validation/tests)
+DKN_VOLUMES = set(_DOMAIN_TO_DKN.values()) | set(_DKN_EXTRA.values())
+
+
+def classify_dkn(law: Law) -> Law:
+    """Populate domain_dkn with ΔΚΝ (Ραπτάρχης) top-level subject volumes.
+
+    Deterministic and offline: maps the cited-code/keyword signals (shared with
+    classify_domain) to their canonical Greek volume name, then adds ΔΚΝ-only
+    volumes (agriculture, shipping, ecclesiastical, public works, local
+    government) matched by folded keyword. The extra-volume pass always runs, so
+    a provision can carry both a mapped volume and an extra one.
+
+    A trained GLC/Raptarchis47k model would slot in here behind the same field;
+    LLM `dkn` predictions (enrich_llm) still merge on top when a key is set.
     """
+    for p in law.provisions:
+        hay = f"{law.title}\n{p.text_in_force}"
+        for dom in _domains_for(hay):
+            vol = _DOMAIN_TO_DKN.get(dom)
+            if vol and vol not in p.domain_dkn:
+                p.domain_dkn.append(vol)
+        folded = fold_for_bm25(hay)
+        for kw, vol in _DKN_EXTRA.items():
+            if kw in folded and vol not in p.domain_dkn:
+                p.domain_dkn.append(vol)
     return law
 
 

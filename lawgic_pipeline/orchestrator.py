@@ -77,7 +77,8 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
     emit("classify")
     law = enrich.classify_domain(law)
     law = enrich.classify_document_category(law)       # function taxonomy (deterministic)
-    law = enrich.enrich_llm(law)                       # no-op without LLM key
+    law = enrich.classify_dkn(law)                     # ΔΚΝ/Ραπτάρχης volumes (deterministic)
+    law = enrich.enrich_llm(law)                       # no-op without LLM key; merges extra dkn
     emit("embed")
     vectors = ve.embed_law_chunks(law.ordered_texts())
     emit("load")
