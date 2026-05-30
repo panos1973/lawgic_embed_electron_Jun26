@@ -30,9 +30,11 @@ Tokenization: WORD (searchable text), TRIGRAM (titles/summaries), FIELD (ids/url
               LOWERCASE (hierarchy_path / canonical_id — keeps "Ν.5090/2024" one token).
 
 --------------------------------------------------------------------------------
-CREDENTIALS: WEAVIATE_URL and WEAVIATE_API_KEY default to your existing cluster
-(restored per request). Env vars of the same name override them. The key was
-previously exposed — rotate it in Weaviate Cloud when convenient and update below.
+CREDENTIALS: WEAVIATE_API_KEY MUST be supplied via the environment (or a .env
+loaded by your shell) — it is never stored in this file. WEAVIATE_URL has a
+default cluster endpoint (an endpoint is not a secret) but is overridable via the
+same-named env var. A key that was previously committed here has been removed;
+rotate it in Weaviate Cloud if that has not already been done.
 
 RUN ON WINDOWS (cmd):
     pip install "weaviate-client>=4.16.4"
@@ -69,15 +71,14 @@ WEAVIATE_URL = os.environ.get(
     "https://dxyeak9tnm4gp8raeh1g.c0.europe-west3.gcp.weaviate.cloud",
 )
 
-# Default = your existing cluster key (per request). An env var of the same name
-# overrides it. This key was previously exposed — rotate it when convenient.
-WEAVIATE_API_KEY = os.environ.get(
-    "WEAVIATE_API_KEY",
-    "UHA2SGRFL2RCVzRkeGY1VV9QRGxvY09Qanhrb0MrUEpzR2lXc3lzMUZJaEdxbWp5RTBYN0NOTWx4T1ZRPV92MjAw",
-)
+# API key comes from the environment ONLY — never hardcode it in the repo.
+# A previously committed key was removed; rotate it in Weaviate Cloud if it has
+# not been rotated already, then set WEAVIATE_API_KEY in your shell or .env.
+WEAVIATE_API_KEY = os.environ.get("WEAVIATE_API_KEY", "")
 
 if not WEAVIATE_API_KEY:
-    sys.exit("ERROR: no API key. Set WEAVIATE_API_KEY or restore the default.")
+    sys.exit("ERROR: WEAVIATE_API_KEY is not set. Export it (or put it in .env) "
+             "before running this script.")
 
 # Tenants (jurisdictions). Created automatically on first insert too, but we
 # pre-create the primary one so the collections are immediately usable.

@@ -63,6 +63,22 @@ def cmd_ingest(folder: str):
         client.close(); st.close()
 
 
+def cmd_consolidate():
+    """Store-level cross-law consolidation: apply external amendment edges whose
+    target law is now ingested. Idempotent — safe to re-run."""
+    import weaviate_io as wio
+    client = wio.connect()
+    try:
+        result = wio.consolidate_cross_law(client)
+        emit({"type": "consolidate", **result})
+        if not JSON:
+            print(f"Cross-law consolidation: applied={result['applied']} "
+                  f"already={result['already']} "
+                  f"skipped(target missing)={result['skipped_missing_target']}")
+    finally:
+        client.close()
+
+
 def cmd_status():
     st = State(config.STATE_DB)
     counts = st.counts()
@@ -124,9 +140,11 @@ def main():
     sub.add_parser("status")
     sub.add_parser("review")
     sub.add_parser("retry")
+    sub.add_parser("consolidate")
     args = ap.parse_args(argv)
     {"ingest": lambda: cmd_ingest(args.folder), "status": cmd_status,
-     "review": cmd_review, "retry": cmd_retry}[args.cmd]()
+     "review": cmd_review, "retry": cmd_retry,
+     "consolidate": cmd_consolidate}[args.cmd]()
 
 
 if __name__ == "__main__":
