@@ -37,10 +37,12 @@ function applyCounts(obj) {
 }
 
 // ---- log ----
-function logLine({ stage, doc, msg, cls }) {
+function logLine({ stage, doc, msg, cls, ts }) {
+  const time = ts || new Date().toLocaleTimeString('en-GB');   // HH:MM:SS
   const el = document.createElement('div');
   el.className = 'line';
   el.innerHTML =
+    `<span class="time">${time}</span>` +
     `<span class="stage">${stage || ''}</span>` +
     `<span class="doc">${doc || ''}</span>` +
     `<span class="msg ${cls || ''}">${msg || ''}</span>`;
@@ -72,23 +74,23 @@ window.api.onPipelineEvent((o) => {
       total = o.total; doneCount = 0;
       $('bar').style.width = '0%';
       $('progressLabel').textContent = `0 / ${total}`;
-      logLine({ stage: 'scan', doc: `${o.total} files`, msg: o.folder });
+      logLine({ stage: 'scan', doc: `${o.total} files`, msg: o.folder, ts: o.ts });
       break;
     case 'doc_start':
       $('progressLabel').textContent = `${o.index} / ${o.total} — ${o.doc}`;
       break;
     case 'stage':
-      logLine({ stage: o.stage, doc: o.doc, msg: o.msg });
+      logLine({ stage: o.stage, doc: o.doc, msg: o.msg, ts: o.ts });
       break;
     case 'doc_done': {
       doneCount++;
       if (total) $('bar').style.width = `${Math.round((doneCount / total) * 100)}%`;
       const cls = o.status === 'done' ? 'ok' : (o.status === 'error' ? 'bad' : '');
-      logLine({ stage: o.status, doc: o.doc, msg: '', cls });
+      logLine({ stage: o.status, doc: o.doc, msg: '', cls, ts: o.ts });
       break;
     }
     case 'summary': applyCounts(o.counts); break;
-    case 'log': logLine({ stage: '', doc: '', msg: o.msg }); break;
+    case 'log': logLine({ stage: '', doc: '', msg: o.msg, ts: o.ts }); break;
   }
 });
 

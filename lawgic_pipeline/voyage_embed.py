@@ -1,6 +1,10 @@
 """voyage_embed.py — contextualized embeddings + rerank (voyage-context-3 / rerank-2.5).
 
-Whole-law nested input so each provision vector carries full-document context.
+Chunks are sent nested so each provision vector carries surrounding context. A
+law longer than one context window is split into several windows; chunks share
+context within a window. voyage-context-3's window is 32k tokens PER input
+document (the list of chunks sent together), so a long law MUST be split or the
+API rejects it ("example ... too many tokens ... context window of 32000").
 """
 from __future__ import annotations
 import time
@@ -11,7 +15,12 @@ import config
 import logsetup
 
 _client = None
-MAX_TOKENS, MAX_CHUNKS, SAFETY = 120_000, 16_000, 0.9
+# voyage-context-3 context window: 32k tokens per input document. We pack chunks
+# into windows that stay under SAFETY*32k (conservative — token estimate is
+# char-based, and Greek tokenizes denser than the estimate assumes).
+CONTEXT_WINDOW_TOKENS = 32_000
+MAX_CHUNKS = 16_000          # voyage per-request chunk cap
+SAFETY = 0.75
 
 log = logsetup.get("embed")
 
@@ -29,14 +38,16 @@ def _est_tokens(t: str) -> int:
 
 
 def _plan_batches(chunks: list[str]) -> list[list[int]]:
-    """Group chunk indices into API batches that respect the token/chunk budget.
+    """Group chunk indices into context windows that respect the token/chunk budget.
 
-    Pure (no network) so it can be unit-tested: a single batch when everything
+    Pure (no network) so it can be unit-tested: a single window when everything
     fits the budget, otherwise greedy packing by estimated tokens / chunk count.
+    A single chunk larger than the budget is sent in its own window (best effort;
+    logged) rather than silently dropped or merged.
     """
     if not chunks:
         return []
-    budget = int(MAX_TOKENS * SAFETY)
+    budget = int(CONTEXT_WINDOW_TOKENS * SAFETY)
     if sum(_est_tokens(c) for c in chunks) <= budget and len(chunks) <= MAX_CHUNKS:
         return [list(range(len(chunks)))]
     batches: list[list[int]] = []
@@ -44,6 +55,9 @@ def _plan_batches(chunks: list[str]) -> list[list[int]]:
     tok = 0
     for i, c in enumerate(chunks):
         t = _est_tokens(c)
+        if t > budget:
+            log.warning("chunk %d alone ~%d tok exceeds window budget %d — sending solo",
+                        i, t, budget)
         if cur and (tok + t > budget or len(cur) >= MAX_CHUNKS):
             batches.append(cur)
             cur, tok = [], 0
