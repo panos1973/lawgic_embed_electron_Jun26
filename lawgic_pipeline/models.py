@@ -135,6 +135,7 @@ class Law:
     instrument_key: str
     instrument_type: str
     title: str = ""
+    document_category: str = ""   # function taxonomy: NOMOS_AMENDMENT, PD_REGULATORY, ...
     fek_series: str = ""
     fek_number: str = ""
     fek_date: str = ""

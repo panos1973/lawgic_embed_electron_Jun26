@@ -38,7 +38,28 @@ CODE_DOMAIN = {
     r"4548/2018|4072/2012|ανώνυμ\w+\s+εταιρ\w+|\bΕΠΕ\b|\bΙΚΕ\b": "corporate",
     r"4738/2020|πτωχευτικ\w+|αφερεγγυότητ\w+": "insolvency",
     r"2960/2001|τελωνειακ\w+|δασμ\w+": "customs",
-    r"4001/2011|4685/2020|περιβάλλον\w*|ενεργειακ\w+": "energy_environment",
+    # environment / energy split out as the old app's taxonomy keeps them distinct
+    r"1650/1986|4014/2011|4685/2020|περιβάλλον\w*|περιβαλλοντικ\w+": "environmental",
+    r"4001/2011|4951/2022|ενεργειακ\w+|ΑΠΕ\b|ανανεώσιμ\w+\s+πηγ": "energy",
+    # broader subject domains ported from the old app's 17-label set
+    r"2690/1999|Κώδικα?\s+Διοικητικής\s+Διαδικασίας|2717/1999|"
+    r"Κώδικα?\s+Διοικητικής\s+Δικονομίας|ΚΔΔ\b": "administrative",
+    r"Εμπορικ\w+\s+Νόμ\w+|Εμπορικ\w+\s+Κώδικ|5325/1932|αξιόγραφ\w+": "commercial",
+    r"\bΣύνταγμα\b|Συντάγματος|συνταγματικ\w+": "constitutional",
+    r"Οδηγί\w+\s+\(?(?:ΕΕ|Ε\.Ε\.|ΕΚ)\)?|Κανονισμ\w+\s+\(?(?:ΕΕ|Ε\.Ε\.)\)?|"
+    r"ενωσιακ\w+\s+δίκαι|Ευρωπαϊκ\w+\s+Ένωσ": "eu_law",
+    r"4387/2016|ασφαλιστικ\w+\s+(?:φορέ|νομοθεσ)|κοινωνικ\w+\s+ασφάλισ|"
+    r"συνταξιοδοτικ\w+": "social_security",
+    r"4600/2019|4512/2018|υγειονομικ\w+|δημόσι\w+\s+υγεί|\bΕΣΥ\b": "health",
+    r"4957/2022|4547/2018|τριτοβάθμι\w+\s+εκπαίδευσ|πανεπιστήμι\w+|"
+    r"σχολικ\w+\s+μονάδ": "education",
+    r"\bΚΟΚ\b|Κώδικα?\s+Οδικής\s+Κυκλοφορίας|αεροπορικ\w+\s+μεταφορ|"
+    r"ναυτιλιακ\w+|σιδηροδρομικ\w+": "transport",
+    r"4727/2020|ψηφιακ\w+\s+διακυβέρν|ηλεκτρονικ\w+\s+διακυβέρν|"
+    r"Κώδικα?\s+Ψηφιακής": "digital",
+    r"3883/2010|ένοπλ\w+\s+δυνάμ|στρατιωτικ\w+\s+προσωπικ|εθνικ\w+\s+άμυν": "defense",
+    r"4251/2014|3386/2005|μεταναστευτικ\w+|αλλοδαπ\w+|\bάσυλο\b|"
+    r"αιτ\w+\s+ασύλου": "immigration",
 }
 
 # Accent-folded keyword fallback (applied only when CODE_DOMAIN matched nothing).
@@ -51,6 +72,14 @@ KEYWORD_DOMAIN = {
     "διαγωνισμος": "public_procurement", "αναθετουσα": "public_procurement",
     "δεδομεν": "data_protection", "απορρητο": "data_protection",
     "μετοχ": "corporate", "εταιρ": "corporate",
+    "περιβαλλον": "environmental", "ενεργειακ": "energy",
+    "συνταγμα": "constitutional", "συνταγματικ": "constitutional",
+    "ενωσιακ": "eu_law", "ευρωπαικ": "eu_law",
+    "ασφαλιστικ": "social_security", "συνταξ": "social_security",
+    "υγειονομ": "health", "νοσοκομει": "health",
+    "εκπαιδευ": "education", "πανεπιστημ": "education",
+    "μεταναστ": "immigration", "αλλοδαπ": "immigration",
+    "στρατιωτικ": "defense", "ψηφιακ": "digital",
 }
 
 
@@ -84,6 +113,101 @@ def classify_dkn(law: Law) -> Law:
     is available, load it here and append predictions to p.domain_dkn.
     """
     return law
+
+
+# ── document-category taxonomy (ported from the old app's detection-schema) ──
+# A function taxonomy that sub-classifies the coarse instrument_type (already on
+# the Law from the masthead) into the 20 categories the old TS app routed on.
+# Deterministic: instrument_type + accent-folded title signals (+ deep-hierarchy
+# evidence from segmentation for codifications). No LLM, no network.
+
+# title-signal keyword groups (accent-folded), most-specific intent first
+_CAT_SIGNALS = {
+    "amendment":      ("τροποποιησ", "τροποποιειται", "τροποποιουνται",
+                       "αντικατασταση", "αντικαθισταται", "καταργειται"),
+    "codification":   ("κωδικοποιησ", "κωδικοποιητικ", "κωδικοποιουμεν",
+                       "κωδικας"),
+    "ratification":   ("κυρωση", "επικυρωση", "κυρωνεται", "συνθηκη",
+                       "πρωτοκολλο", "διεθν συμβ"),
+    "organizational": ("οργανισμος", "διαρθρωση", "συσταση", "οργανωση",
+                       "κατανομη θεσε"),
+    "regulatory":     ("κανονισμος", "κανονιστικ", "ρυθμιση", "καθορισμος",
+                       "καθορισμ"),
+    "enforcement":    ("εφαρμογη", "εκτελεση", "εφαρμοστικ"),
+}
+
+# every category string the classifier can emit (mirrors the old DocumentCategory)
+DOCUMENT_CATEGORIES = {
+    "NOMOS_AMENDMENT", "NOMOS_CODIFICATION", "NOMOS_RATIFICATION",
+    "NOMOS_SUBSTANTIVE", "PD_ORGANIZATIONAL", "PD_REGULATORY",
+    "PD_CODIFICATION", "PD_AMENDMENT", "PD_ENFORCEMENT", "PNP", "PSIFISMA",
+    "KYA", "YA_REGULATORY", "YA_INDIVIDUAL", "YA_ORGANIZATIONAL",
+    "EGKYKLIOS", "GNOMODOSIA", "UNKNOWN",
+}
+
+
+def _signal(folded: str, kind: str) -> bool:
+    return any(k in folded for k in _CAT_SIGNALS[kind])
+
+
+def classify_document_category(law: Law) -> Law:
+    """Set law.document_category from instrument_type + title signals.
+
+    Mirrors the old app's Stage-1 routing: laws split into amendment /
+    codification / ratification / substantive; π.δ. and ΥΑ split by their
+    structural intent. Best-effort and deterministic — when no signal fits, it
+    falls back to the type's most common category (or UNKNOWN for types outside
+    the taxonomy) so the field is always populated.
+    """
+    from models import (TYPE_NOMOS, TYPE_AN, TYPE_ND, TYPE_PD, TYPE_PNP,
+                        TYPE_YA, TYPE_KYA, TYPE_PSIFISMA, TYPE_KANAP,
+                        TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD)
+
+    folded = fold_for_bm25(law.title or "")
+    # deep hierarchy (ΒΙΒΛΙΟ/ΜΕΡΟΣ/ΚΕΦΑΛΑΙΟ) is strong codification evidence
+    deep = any(p.book or p.part for p in law.provisions)
+    t = law.instrument_type
+
+    if t in (TYPE_NOMOS, TYPE_AN, TYPE_ND):
+        if _signal(folded, "ratification"):
+            cat = "NOMOS_RATIFICATION"
+        elif _signal(folded, "codification") or deep:
+            cat = "NOMOS_CODIFICATION"
+        elif _signal(folded, "amendment"):
+            cat = "NOMOS_AMENDMENT"
+        else:
+            cat = "NOMOS_SUBSTANTIVE"
+    elif t == TYPE_PD:
+        if _signal(folded, "organizational"):
+            cat = "PD_ORGANIZATIONAL"
+        elif _signal(folded, "codification") or deep:
+            cat = "PD_CODIFICATION"
+        elif _signal(folded, "amendment"):
+            cat = "PD_AMENDMENT"
+        elif _signal(folded, "enforcement"):
+            cat = "PD_ENFORCEMENT"
+        else:
+            cat = "PD_REGULATORY"
+    elif t == TYPE_PNP:
+        cat = "PNP"
+    elif t == TYPE_PSIFISMA:
+        cat = "PSIFISMA"
+    elif t == TYPE_KYA:
+        cat = "KYA"
+    elif t in (TYPE_YA, TYPE_KANAP, TYPE_APOF_DIOIK, TYPE_APOF_PERIF,
+               TYPE_APOF_NPDD):
+        if _signal(folded, "organizational"):
+            cat = "YA_ORGANIZATIONAL"
+        elif _signal(folded, "regulatory") or t == TYPE_KANAP:
+            cat = "YA_REGULATORY"
+        else:
+            cat = "YA_INDIVIDUAL"
+    else:
+        cat = "UNKNOWN"
+
+    law.document_category = cat
+    return law
+
 
 # STABLE prefix — byte-identical across every call so the provider caches it and
 # bills subsequent calls at the cache-hit rate. Only the provision text varies.

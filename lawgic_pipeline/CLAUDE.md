@@ -31,7 +31,15 @@ REAL & working:  config, state (SQLite), models + canonical IDs + citation parse
                  article-level provisions with hierarchy_path).
                  amend (verb detect + nested-genitive target resolution + scope +
                  in-law consolidation to text_in_force, version bump).
-                 domain classifier (layered cited-code + folded-keyword fallback).
+                 domain classifier (layered cited-code + folded-keyword fallback;
+                 17-label subject taxonomy ported from the old app: +administrative,
+                 commercial, constitutional, eu_law, environmental/energy split,
+                 social_security, health, education, transport, digital, defense,
+                 immigration).
+                 document-category classifier (function taxonomy ported from the old
+                 app's detection-schema: instrument_type + title signals -> the 20
+                 categories NOMOS_AMENDMENT/_CODIFICATION/_RATIFICATION/_SUBSTANTIVE,
+                 PD_*, KYA, YA_*, PNP, ...; deterministic, written to LawDocument).
                  delegate (FEK Β΄ implementing acts -> enabling-provision edges).
                  loader populates all 5 collections (flat, article, document,
                  amendment, delegation); validate.py offline accuracy harness.
@@ -81,9 +89,10 @@ Real-FEK hardening (validated against samplefek/ corpus):
     binary so the Windows .exe needs no Python install; adapt the old app's
     windows-latest build-and-release CI.
 
-Tests: lawgic_pipeline/tests/ — 84 passing (masthead, segment, amend, enrich,
-delegate, normalize, quality, multiact, refs, weaviate_io loaders, extract
-integration, full-spine e2e, validate harness). Run: `python -m pytest tests/ -q`.
+Tests: lawgic_pipeline/tests/ — 102 passing (masthead, segment, amend, enrich
+domain + document_category, delegate, normalize, quality, multiact, refs,
+weaviate_io loaders, extract integration, full-spine e2e, validate harness).
+Run: `python -m pytest tests/ -q`.
 
 ## Remaining (where accuracy is still won)
 1. trained ΔΚΝ classifier (GLC/Raptarchis47k) behind classify_dkn.

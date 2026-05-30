@@ -58,9 +58,9 @@ def _fek_year(law: Law) -> int | None:
 def load_document(client, law: Law, tenant: str = None):
     """Write the Jun2026LawDocument graph node (one per law, no vectors).
 
-    Derived from the masthead identity already on the Law. Fields we do not yet
-    extract (issuing_authority, effective_date, document_category) are omitted.
-    Idempotent via generate_uuid5 on the instrument id.
+    Derived from the masthead identity already on the Law plus the deterministic
+    document_category classifier. Fields we do not yet extract (issuing_authority,
+    effective_date) are omitted. Idempotent via generate_uuid5 on the instrument id.
     """
     tenant = tenant or law.jurisdiction or config.DEFAULT_TENANT
     ensure_tenant(client, config.GRAPH_DOCUMENT, tenant)
@@ -73,6 +73,7 @@ def load_document(client, law: Law, tenant: str = None):
                          if law.fek_date else "",
         "law_number": law.instrument_id.split(".")[-1],
         "document_type": law.instrument_type,
+        "document_category": law.document_category or None,
         "title": law.title,
         "publication_date": _rfc3339(law.fek_date),
         "legal_force_status": "in_force",
