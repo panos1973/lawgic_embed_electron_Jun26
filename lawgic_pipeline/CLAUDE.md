@@ -89,7 +89,7 @@ Real-FEK hardening (validated against samplefek/ corpus):
     binary so the Windows .exe needs no Python install; adapt the old app's
     windows-latest build-and-release CI.
 
-Tests: lawgic_pipeline/tests/ — 102 passing (masthead, segment, amend, enrich
+Tests: lawgic_pipeline/tests/ — 101 passing (masthead, segment, amend, enrich
 domain + document_category, delegate, normalize, quality, multiact, refs,
 weaviate_io loaders, extract integration, full-spine e2e, validate harness).
 Run: `python -m pytest tests/ -q`.
