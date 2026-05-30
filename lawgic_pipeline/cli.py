@@ -85,10 +85,13 @@ def cmd_status():
     # APP_VERSION is injected by the Electron shell (from the release tag) so the
     # version is reported here too; falls back to "dev" when run standalone.
     version = os.environ.get("APP_VERSION", "dev")
-    emit({"type": "status", "counts": counts, "version": version})
+    import logsetup
+    logfile = logsetup.log_path()
+    emit({"type": "status", "counts": counts, "version": version, "log": logfile})
     if not JSON:
         print(f"Lawgic FEK Ingest v{version}")
         print("Counts:", counts)
+        print("Log file:", logfile)
     st.close()
 
 
@@ -146,6 +149,8 @@ def main():
     sub.add_parser("retry")
     sub.add_parser("consolidate")
     args = ap.parse_args(argv)
+    import logsetup
+    logsetup.init()                            # durable rotating file log
     {"ingest": lambda: cmd_ingest(args.folder), "status": cmd_status,
      "review": cmd_review, "retry": cmd_retry,
      "consolidate": cmd_consolidate}[args.cmd]()

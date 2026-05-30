@@ -33,7 +33,7 @@ def test_full_spine_processes_to_done(fek_pdf, tmp_path, monkeypatch):
 
     # --- stub Voyage embedding: return a deterministic vector per chunk ---
     monkeypatch.setattr(ve, "embed_law_chunks",
-                        lambda chunks: [[0.0] * 8 for _ in chunks])
+                        lambda chunks, progress=None: [[0.0] * 8 for _ in chunks])
 
     # --- capture what would be written to Weaviate ---
     loaded = {"docs": 0, "laws": 0, "provisions": 0, "amendments": 0, "tenant": None}
