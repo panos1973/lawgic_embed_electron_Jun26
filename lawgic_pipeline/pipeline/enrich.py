@@ -121,20 +121,24 @@ def classify_dkn(law: Law) -> Law:
 # Deterministic: instrument_type + accent-folded title signals (+ deep-hierarchy
 # evidence from segmentation for codifications). No LLM, no network.
 
-# title-signal keyword groups (accent-folded), most-specific intent first
-_CAT_SIGNALS = {
-    "amendment":      ("τροποποιησ", "τροποποιειται", "τροποποιουνται",
-                       "αντικατασταση", "αντικαθισταται", "καταργειται"),
-    "codification":   ("κωδικοποιησ", "κωδικοποιητικ", "κωδικοποιουμεν",
-                       "κωδικας"),
-    "ratification":   ("κυρωση", "επικυρωση", "κυρωνεται", "συνθηκη",
-                       "πρωτοκολλο", "διεθν συμβ"),
-    "organizational": ("οργανισμος", "διαρθρωση", "συσταση", "οργανωση",
-                       "κατανομη θεσε"),
-    "regulatory":     ("κανονισμος", "κανονιστικ", "ρυθμιση", "καθορισμος",
+# title-signal keyword groups, most-specific intent first. Folded through
+# fold_for_bm25 at module load so they match the folded title regardless of
+# accents / final sigma (ς->σ) — keys written here in their natural spelling.
+_CAT_SIGNALS_RAW = {
+    "amendment":      ("τροποποίηση", "τροποποιείται", "τροποποιούνται",
+                       "αντικατάσταση", "αντικαθίσταται", "καταργείται"),
+    "codification":   ("κωδικοποίηση", "κωδικοποιητικ", "κωδικοποιούμεν",
+                       "κώδικας"),
+    "ratification":   ("κύρωση", "επικύρωση", "κυρώνεται", "συνθήκη",
+                       "πρωτόκολλο", "διεθν συμβ"),
+    "organizational": ("οργανισμός", "διάρθρωση", "σύσταση", "οργάνωση",
+                       "κατανομή θέσε"),
+    "regulatory":     ("κανονισμός", "κανονιστικ", "ρύθμιση", "καθορισμός",
                        "καθορισμ"),
-    "enforcement":    ("εφαρμογη", "εκτελεση", "εφαρμοστικ"),
+    "enforcement":    ("εφαρμογή", "εκτέλεση", "εφαρμοστικ"),
 }
+_CAT_SIGNALS = {k: tuple(fold_for_bm25(s) for s in v)
+                for k, v in _CAT_SIGNALS_RAW.items()}
 
 # every category string the classifier can emit (mirrors the old DocumentCategory)
 DOCUMENT_CATEGORIES = {
