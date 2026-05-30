@@ -14,6 +14,7 @@ import glob
 import json
 import os
 import sys
+import time
 
 import config
 from state import State
@@ -23,6 +24,7 @@ JSON = False
 
 def emit(obj: dict):
     if JSON:
+        obj.setdefault("ts", time.strftime("%H:%M:%S"))   # event time for the UI log
         sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
         sys.stdout.flush()
 
