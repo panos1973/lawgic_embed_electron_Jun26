@@ -67,13 +67,23 @@ Real-FEK hardening (validated against samplefek/ corpus):
     real header (codifying π.δ. end with hundreds of bare "Άρθρο X/Y" pairs).
     Fixed π.δ.62 over-segmentation 1320 -> 588 provisions; normal laws unchanged
     (ν.5086 still 40).
-  Phase 4 (planned, not built) — OCR via Azure DI: selective (scanned/CID/table
-    pages only), rasterize+OCR for CID-encoded born-digital pages (Σύνταγμα-class),
-    guarded behind DI_ENDPOINT/DI_KEY.
+  Phase 4 — OCR routing (built, Azure DI guarded by DI_ENDPOINT/DI_KEY):
+    pipeline/quality.py scores each page's RAW text 0-100 (multi-signal: CID
+    tokens, garbled-Greek Latin-1 ranges, box/symbol/control glyphs, '?'-garble,
+    avg word length) — ported from the old app's text-quality.util.ts. Pages that
+    score <40 are flagged ocr_pages; extract.py routes ONLY those pages (∪ table
+    pages) through selective per-page Azure DI, keeping clean pages on the free
+    text layer. Whole-doc DI only when the doc is fully 'scanned'. Validated:
+    Σύνταγμα 2019 -> scanned/32 OCR pages; bilingual treaty -> mixed/38 OCR
+    (foreign CID pages) with Greek pages kept; clean laws -> 0 OCR. Without DI
+    keys the pipeline degrades gracefully with warnings.
+  Packaging (planned): PyInstaller-freeze lawgic_pipeline into a self-contained
+    binary so the Windows .exe needs no Python install; adapt the old app's
+    windows-latest build-and-release CI.
 
-Tests: lawgic_pipeline/tests/ — 78 passing (masthead, segment, amend, enrich,
-delegate, normalize, multiact, refs, weaviate_io loaders, extract integration,
-full-spine e2e, validate harness). Run: `python -m pytest tests/ -q`.
+Tests: lawgic_pipeline/tests/ — 84 passing (masthead, segment, amend, enrich,
+delegate, normalize, quality, multiact, refs, weaviate_io loaders, extract
+integration, full-spine e2e, validate harness). Run: `python -m pytest tests/ -q`.
 
 ## Remaining (where accuracy is still won)
 1. trained ΔΚΝ classifier (GLC/Raptarchis47k) behind classify_dkn.

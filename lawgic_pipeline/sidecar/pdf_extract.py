@@ -102,26 +102,39 @@ def detect(path: str) -> dict:
 
     pages_meta: list[dict] = []
     table_pages: list[int] = []
+    ocr_pages: list[int] = []
     warnings: list[str] = []
     text_pages = 0
 
     try:
-        from pipeline.normalize import normalize_glyphs, cid_ratio
+        from pipeline.normalize import normalize_glyphs
+        from pipeline.quality import score_text
     except Exception:  # noqa: BLE001 — sidecar must run even if import path differs
         normalize_glyphs = lambda t: t            # noqa: E731
-        cid_ratio = lambda t: 0.0                 # noqa: E731
+        score_text = None                         # noqa: E731
 
     with pdfplumber.open(path) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
             try:
-                text = _column_text(page)
+                raw = _column_text(page)
             except Exception as e:  # noqa: BLE001 — one bad page must not abort
-                text = ""
+                raw = ""
                 warnings.append(f"page {i}: text extraction failed ({e})")
-            # CID-heavy page has no usable text layer -> treat as scanned (OCR).
-            if cid_ratio(text) > 0.5:
+
+            # Multi-signal quality gate (CID, garbled-Greek, box glyphs, '?' garble).
+            # Score the RAW page text — before normalize_glyphs strips (cid:NNN)
+            # tokens — so the CID signal is still visible. A page whose text is
+            # *corrupted* (not merely short) has no usable text layer and is routed
+            # to OCR rather than embedded; a short but clean page (small table,
+            # signature) is kept as-is.
+            if score_text is not None and len(raw.strip()) >= _TEXT_CHAR_THRESHOLD \
+                    and not score_text(raw).is_valid:
+                ocr_pages.append(i)
+                warnings.append(
+                    f"page {i}: low text quality -> OCR ({score_text(raw).reason})")
                 text = ""
-            text = normalize_glyphs(text)
+            else:
+                text = normalize_glyphs(raw)
 
             # table detection — guarded; find_tables can throw on odd geometry
             tables = []
@@ -170,6 +183,7 @@ def detect(path: str) -> dict:
         "pdf_classification": classification,
         "pages_meta": pages_meta,
         "table_pages": table_pages,
+        "ocr_pages": ocr_pages,
         "warnings": warnings,
     }
 

@@ -32,6 +32,7 @@ class ExtractResult:
     pages_markdown: list[str]
     warnings: list[str]
     masthead: dict = field(default_factory=dict)
+    ocr_pages: list[int] = field(default_factory=list)
 
 
 def _azure_layout_markdown(path: str, pages: list[int] | None = None) -> str:
@@ -69,13 +70,14 @@ def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
     warnings = list(det.get("warnings", []))
     classification = det["pdf_classification"]
     table_pages = det.get("table_pages", [])
+    ocr_pages = det.get("ocr_pages", [])      # text layer too poor -> needs OCR
     pages_meta = det.get("pages_meta", [])
     pages_markdown = [p["markdown"] for p in pages_meta]
 
     di_available = use_azure and bool(config.AZURE_DI_ENDPOINT and config.AZURE_DI_KEY)
 
-    if classification in ("scanned", "mixed"):
-        # No reliable text layer for at least some pages: prefer whole-doc DI.
+    if classification == "scanned":
+        # No usable text layer anywhere: whole-doc DI is the only option.
         if di_available:
             try:
                 text = _azure_layout_markdown(path)
@@ -84,24 +86,32 @@ def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
                 text = det["markdown"]
         else:
             warnings.append(
-                f"document is '{classification}' but Azure DI is not configured; "
-                "using pdfplumber text layer (table/scan fidelity may be reduced)")
+                "document is 'scanned' (no usable text layer) but Azure DI is not "
+                "configured; cannot OCR — output will be empty/low quality")
             text = det["markdown"]
     else:
-        # Clean text layer everywhere: keep pdfplumber text, upgrade only the
-        # table pages with DI for high-fidelity tables (the splice technique).
-        if di_available and table_pages:
-            for pg in table_pages:
+        # 'text' or 'mixed': keep the good pdfplumber text and upgrade ONLY the
+        # pages that need it (tables for fidelity, OCR pages for missing text)
+        # with selective per-page DI. This is the cost-conscious path: clean
+        # pages stay free, only the exceptions hit the paid OCR service.
+        upgrade_pages = sorted(set(table_pages) | set(ocr_pages))
+        if di_available and upgrade_pages:
+            for pg in upgrade_pages:
                 try:
                     md = _azure_layout_markdown(path, pages=[pg])
                     if md.strip() and 1 <= pg <= len(pages_markdown):
                         pages_markdown[pg - 1] = md
                 except Exception as e:  # noqa: BLE001
                     warnings.append(f"Azure DI page {pg} upgrade failed ({e})")
-        elif table_pages and not di_available:
-            warnings.append(
-                f"{len(table_pages)} table page(s) detected; Azure DI not "
-                "configured, using pdfplumber markdown tables")
+        elif upgrade_pages and not di_available:
+            if ocr_pages:
+                warnings.append(
+                    f"{len(ocr_pages)} page(s) need OCR (poor text layer) but Azure "
+                    "DI is not configured; those pages will be missing/low quality")
+            if table_pages:
+                warnings.append(
+                    f"{len(table_pages)} table page(s) detected; Azure DI not "
+                    "configured, using pdfplumber markdown tables")
         text = "\n\n".join(m for m in pages_markdown if m)
 
     # Masthead is parsed on the full text (it needs the cover block); the body
@@ -118,4 +128,5 @@ def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
         pages_markdown=pages_markdown,
         warnings=warnings,
         masthead=masthead,
+        ocr_pages=ocr_pages,
     )
