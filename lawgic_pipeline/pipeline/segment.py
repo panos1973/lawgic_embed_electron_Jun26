@@ -72,6 +72,7 @@ def segment(text: str, law: Law) -> Law:
     anchors.sort(key=lambda a: a[0])
 
     state = {lvl: "" for lvl in _ORDER}        # current structural tokens
+    seen_articles: set[str] = set()            # de-dup repeated Άρθρο headers
 
     for idx, (start, end, kind, m) in enumerate(anchors):
         nxt = anchors[idx + 1][0] if idx + 1 < len(anchors) else len(text)
@@ -107,6 +108,13 @@ def segment(text: str, law: Law) -> Law:
 
         # kind == "article"
         art_no = m.group(1)
+        # An "Άρθρο N" line with no body, or a repeat of an article number already
+        # emitted, is not a real header — it is a correspondence-table / index
+        # artifact (codifying π.δ. end up with hundreds of bare "Άρθρο X" pairs).
+        # Within one instrument an article number is unique, so keep the first.
+        if not body or art_no in seen_articles:
+            continue
+        seen_articles.add(art_no)
         title = _first_line(body)
         cid = make_provision_id(law.instrument_id, art_no)
         path = " > ".join([law.instrument_id, *_structural_path(state),

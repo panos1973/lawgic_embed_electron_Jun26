@@ -25,6 +25,19 @@ def test_roman_numeral_articles():
     assert [p.article_no for p in law.provisions] == ["ΧΙΙ", "ΧΙΙΙ"]
 
 
+def test_correspondence_table_artifacts_dropped():
+    # codifying π.δ. end with bare "Άρθρο N" pairs (empty body) and repeats of
+    # numbers already emitted — these must not become provisions.
+    law = Law(instrument_id="π.δ.62/2025", instrument_key="x",
+              instrument_type=TYPE_NOMOS)
+    txt = ("Άρθρο 1\nΣκοπός του Κώδικα είναι η ρύθμιση.\n"
+           "Άρθρο 2\nΟρισμοί κατά την έννοια του παρόντος.\n"
+           # end correspondence table: bare pairs, incl. a repeat of Άρθρο 1
+           "Άρθρο 1\nΆρθρο 148\nΆρθρο 2\nΆρθρο 149\n")
+    law = segment(txt, law)
+    assert [p.article_no for p in law.provisions] == ["1", "2"]   # table dropped
+
+
 def _law():
     return Law(instrument_id="ν.5090/2024", instrument_key="N5090/2024",
                instrument_type=TYPE_NOMOS)

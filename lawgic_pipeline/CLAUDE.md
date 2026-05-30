@@ -62,10 +62,14 @@ Real-FEK hardening (validated against samplefek/ corpus):
     into provision.cites. segment.py adds spelled-ordinal (Άρθρο πρώτο/μόνο) and
     Roman-numeral (Άρθρο XII) article anchors. ΜΕΡΟΣ/ΚΕΦΑΛΑΙΟ tier already worked
     post-Phase-1 (verified: ν.5086 -> ΜΕΡΟΣ Α' > ΚΕΦΑΛΑΙΟ Α' > Άρθρο 1).
+  Phase 3.5 — segment.py drops correspondence-table artifacts: an "Άρθρο N" line
+    with empty body, or a repeat of an already-emitted article number, is not a
+    real header (codifying π.δ. end with hundreds of bare "Άρθρο X/Y" pairs).
+    Fixed π.δ.62 over-segmentation 1320 -> 588 provisions; normal laws unchanged
+    (ν.5086 still 40).
   Phase 4 (planned, not built) — OCR via Azure DI: selective (scanned/CID/table
     pages only), rasterize+OCR for CID-encoded born-digital pages (Σύνταγμα-class),
-    guarded behind DI_ENDPOINT/DI_KEY. Known issue: codification π.δ. with an
-    end correspondence-table over-segments (Άρθρο anchor) — to be bounded.
+    guarded behind DI_ENDPOINT/DI_KEY.
 
 Tests: lawgic_pipeline/tests/ — 78 passing (masthead, segment, amend, enrich,
 delegate, normalize, multiact, refs, weaviate_io loaders, extract integration,
