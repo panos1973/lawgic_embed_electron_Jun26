@@ -65,6 +65,7 @@ function childEnv(s) {
     LLM_PROVIDER: s.llmProvider, LLM_MODEL: s.llmModel,
     LLM_THINKING: s.llmThinking ? 'on' : 'off',
     STATE_DB: s.stateDb, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8',
+    APP_VERSION: app.getVersion(),
   });
 }
 
@@ -153,12 +154,13 @@ function registerIpc(win) {
     return Object.assign(s, { encryptionAvailable: safeStorage.isEncryptionAvailable() });
   });
   ipcMain.handle('settings:save', (_e, obj) => saveSettings(obj));
+  ipcMain.handle('app:version', () => app.getVersion());
 }
 
 function createWindow() {
   const win = new BrowserWindow({
     width: 1100, height: 760, minWidth: 820, minHeight: 560,
-    backgroundColor: '#0e0f12', title: 'Lawgic · FEK Ingest',
+    backgroundColor: '#0e0f12', title: `Lawgic · FEK Ingest · v${app.getVersion()}`,
     webPreferences: { preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true, nodeIntegration: false },
   });

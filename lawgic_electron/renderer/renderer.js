@@ -147,6 +147,17 @@ $('saveSettings').addEventListener('click', async () => {
   setTimeout(() => ($('savedNote').textContent = ''), 2000);
 });
 
+// ---- app version ----
+async function showVersion() {
+  try {
+    const v = await window.api.getAppVersion();
+    if (!v) return;
+    $('appVer').textContent = `v${v}`;
+    document.title = `Lawgic · FEK Ingest · v${v}`;
+  } catch (_) { /* non-fatal */ }
+}
+
 // ---- init ----
 renderCounts();
 refreshStatus();
+showVersion();

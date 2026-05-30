@@ -14,7 +14,7 @@ Build (on the target OS — Windows for the .exe):
 
 The Electron shell picks up dist/lawgic-core/ via electron-builder extraResources.
 """
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
 # Third-party packages that carry data files or rely on dynamic submodule
 # imports PyInstaller's static analysis can miss. collect_all pulls in their
@@ -26,6 +26,14 @@ for pkg in ("weaviate", "voyageai", "pdfplumber", "pdfminer", "anthropic",
     datas += d
     binaries += b
     hiddenimports += h
+
+# Some dependencies look up their own version at runtime via
+# importlib.metadata.version(...) — e.g. weaviate.proto reads "protobuf" — which
+# needs the package's .dist-info METADATA bundled. collect_all ships code/data
+# but NOT this metadata, so copy it explicitly (recursive = include the whole
+# dependency tree, covering protobuf/grpcio and anything else weaviate queries).
+for dist in ("weaviate-client", "protobuf", "grpcio"):
+    datas += copy_metadata(dist, recursive=True)
 
 # Local modules reached only through function-level / late imports (the sidecar
 # detector and the per-stage pipeline package). Listed explicitly so they are
