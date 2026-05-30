@@ -82,8 +82,12 @@ def cmd_consolidate():
 def cmd_status():
     st = State(config.STATE_DB)
     counts = st.counts()
-    emit({"type": "status", "counts": counts})
+    # APP_VERSION is injected by the Electron shell (from the release tag) so the
+    # version is reported here too; falls back to "dev" when run standalone.
+    version = os.environ.get("APP_VERSION", "dev")
+    emit({"type": "status", "counts": counts, "version": version})
     if not JSON:
+        print(f"Lawgic FEK Ingest v{version}")
         print("Counts:", counts)
     st.close()
 

@@ -9,6 +9,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:        # allow manual runs for testing the pipeline
+    inputs:
+      version:
+        description: 'Version to stamp (e.g. 1.0.4). Blank = 0.0.0-dev.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -71,7 +76,20 @@ jobs:
         working-directory: lawgic_electron
         run: npm install
 
-      - name: Build Windows installer + portable
+      # Stamp the version the user entered for the release (its tag) into
+      # package.json so the installer filename and the in-app version both match
+      # it. For manual runs, the workflow_dispatch `version` input is used.
+      - name: Set app version from release tag
+        shell: pwsh
+        working-directory: lawgic_electron
+        run: |
+          $ver = "${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.version }}"
+          if (-not $ver) { $ver = "0.0.0-dev" }
+          $ver = $ver -replace '^v', ''          # accept both "1.0.4" and "v1.0.4"
+          Write-Host "Stamping app version: $ver"
+          npm version $ver --no-git-tag-version --allow-same-version
+
+      - name: Build Windows installer
         working-directory: lawgic_electron
         run: npm run dist
         env:

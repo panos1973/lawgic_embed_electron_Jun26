@@ -46,6 +46,11 @@ body {
 }
 .brand-name { font-family: var(--disp); font-weight: 600; font-size: 20px; letter-spacing: 2px; }
 .brand-sub { color: var(--muted); font-size: 10px; letter-spacing: 3px; margin-top: 2px; }
+.topbar-right { display: flex; align-items: center; gap: 14px; }
+.appver {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 1px;
+  color: var(--muted); opacity: .8;
+}
 .pill {
   display: flex; align-items: center; gap: 8px; padding: 6px 14px;
   border: 1px solid var(--line); border-radius: 100px; font-size: 11px;
