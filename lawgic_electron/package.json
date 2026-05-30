@@ -5,8 +5,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win",
-    "dist:portable": "electron-builder --win portable"
+    "dist": "electron-builder --win -p never",
+    "dist:portable": "electron-builder --win portable -p never"
   },
   "author": "Lawgic",
   "license": "UNLICENSED",
