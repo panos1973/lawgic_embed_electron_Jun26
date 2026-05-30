@@ -1,0 +1,101 @@
+name: Build and Release (Windows desktop)
+
+# Builds the Windows desktop .exe: freeze the Python pipeline with PyInstaller,
+# then package the Electron shell around it with electron-builder. Adapted from
+# the old lawgic-embedder windows-latest workflow; the new step is the freeze,
+# so the shipped app needs no Python install on the user's machine.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:        # allow manual runs for testing the pipeline
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Clean build artifacts
+        shell: pwsh
+        run: |
+          Write-Host "=== CLEANING BUILD ARTIFACTS ==="
+          foreach ($p in @(
+            "lawgic_electron\node_modules", "lawgic_electron\dist",
+            "lawgic_pipeline\dist", "lawgic_pipeline\build")) {
+            if (Test-Path $p) { Remove-Item -Recurse -Force $p }
+          }
+          Write-Host "=== CLEAN COMPLETE ==="
+
+      # ---- 1. Freeze the Python pipeline into a self-contained core ----
+      - name: Install Python deps + PyInstaller
+        working-directory: lawgic_pipeline
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Sanity-check the pipeline (unit tests, no network)
+        working-directory: lawgic_pipeline
+        run: python -m pytest tests/ -q
+
+      - name: Freeze core with PyInstaller (onedir)
+        working-directory: lawgic_pipeline
+        run: pyinstaller lawgic-core.spec --noconfirm
+
+      - name: Smoke-test the frozen core
+        shell: pwsh
+        working-directory: lawgic_pipeline
+        run: |
+          $exe = "dist\lawgic-core\lawgic-core.exe"
+          if (-not (Test-Path $exe)) { Write-Error "frozen core not found: $exe"; exit 1 }
+          # `status` opens the state DB and prints JSON without needing any
+          # network/API keys — proves the bundle's imports all resolve.
+          $env:STATE_DB = "$env:TEMP\lawgic_smoke.db"
+          & $exe --json status
+          if ($LASTEXITCODE -ne 0) { Write-Error "frozen core smoke test failed"; exit 1 }
+          Write-Host "Frozen core OK"
+
+      # ---- 2. Package the Electron shell around the frozen core ----
+      - name: Install Electron deps
+        working-directory: lawgic_electron
+        run: npm install
+
+      - name: Build Windows installer + portable
+        working-directory: lawgic_electron
+        run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify .exe output exists
+        shell: pwsh
+        working-directory: lawgic_electron
+        run: |
+          $exeFiles = Get-ChildItem -Path dist -Filter *.exe -ErrorAction SilentlyContinue
+          if (-not $exeFiles) { Write-Error "No .exe files found in lawgic_electron/dist/"; exit 1 }
+          Write-Host "Found: $($exeFiles.Name)"
+
+      - name: Upload .exe to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: lawgic_electron/dist/*.exe
+
+      - name: Upload .exe as workflow artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lawgic-fek-ingest-win
+          path: lawgic_electron/dist/*.exe

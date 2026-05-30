@@ -15,6 +15,12 @@ function defaults() {
     coreDir: app.isPackaged
       ? path.join(process.resourcesPath, 'lawgic_pipeline')
       : path.join(__dirname, '..', 'lawgic_pipeline'),
+    // Frozen PyInstaller core (dist/lawgic-core/), shipped via extraResources.
+    // When present the app runs it directly and needs no Python install;
+    // otherwise it falls back to `pythonPath cli.py` (the dev path).
+    frozenDir: app.isPackaged
+      ? path.join(process.resourcesPath, 'lawgic-core')
+      : path.join(__dirname, '..', 'lawgic_pipeline', 'dist', 'lawgic-core'),
     weaviateUrl: 'https://dxyeak9tnm4gp8raeh1g.c0.europe-west3.gcp.weaviate.cloud',
     weaviateApiKey: '', voyageApiKey: '', diEndpoint: '', diKey: '',
     anthropicKey: '', deepseekKey: '', geminiKey: '', jurisdiction: 'gr',
@@ -62,11 +68,26 @@ function childEnv(s) {
   });
 }
 
-// ---- python core invocation ----
+// ---- core invocation (frozen binary if present, else python cli.py) ----
 let activeChild = null;
+
+// Resolve the frozen core binary for this platform, or null if not bundled.
+function frozenBinary(s) {
+  const exe = process.platform === 'win32' ? 'lawgic-core.exe' : 'lawgic-core';
+  const p = path.join(s.frozenDir, exe);
+  try { return fs.existsSync(p) ? p : null; } catch (_) { return null; }
+}
 
 function spawnCore(args) {
   const s = loadSettings();
+  const frozen = frozenBinary(s);
+  if (frozen) {
+    // Frozen onedir core: invoke the binary directly, cwd at its own folder so
+    // PyInstaller resolves its bundled libs and our package data.
+    return spawn(frozen, ['--json', ...args], {
+      cwd: s.frozenDir, env: childEnv(s),
+    });
+  }
   const script = path.join(s.coreDir, 'cli.py');
   return spawn(s.pythonPath, [script, '--json', ...args], {
     cwd: s.coreDir, env: childEnv(s),
