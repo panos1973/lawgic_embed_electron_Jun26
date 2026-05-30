@@ -23,6 +23,9 @@ import pipeline.multiact as multiact
 import pipeline.refs as refs
 import voyage_embed as ve
 import weaviate_io as wio
+import logsetup
+
+log = logsetup.get("orchestrator")
 
 
 def _hash_file(path: str) -> str:
@@ -79,8 +82,10 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
     law = enrich.classify_document_category(law)       # function taxonomy (deterministic)
     law = enrich.classify_dkn(law)                     # ΔΚΝ/Ραπτάρχης volumes (deterministic)
     law = enrich.enrich_llm(law)                       # no-op without LLM key; merges extra dkn
-    emit("embed")
-    vectors = ve.embed_law_chunks(law.ordered_texts())
+    chunks = law.ordered_texts()
+    emit("embed", f"{law.instrument_id}: embedding {len(chunks)} chunk(s)")
+    log.info("embed %s: %d chunk(s)", law.instrument_id, len(chunks))
+    vectors = ve.embed_law_chunks(chunks, progress=lambda m: emit("embed", m))
     emit("load")
     wio.load_document(client, law)
     wio.load_law(client, law, vectors)
@@ -98,10 +103,12 @@ def process_document(client, st: State, path: str,
 
     chash = _hash_file(path)
     doc_id = os.path.basename(path)
+    log.info("process start: %s", doc_id)
     st.upsert(doc_id, path, chash)
     if st.seen_hash(chash):
         st.set_status(doc_id, "done", stage="dedup")
         emit("dedup", "unchanged — skipped")
+        log.info("dedup skip (unchanged): %s", doc_id)
         return "done"
 
     try:
@@ -146,13 +153,17 @@ def process_document(client, st: State, path: str,
                      + (f", {review} to review" if review else ""))
         st.set_status(doc_id, "done", stage="load",
                       confidence=1.0 if review == 0 else 0.8)
+        log.info("process done: %s — %d instrument(s), %d provisions, %d review",
+                 doc_id, done, total_prov, review)
         return "done"
 
     except NotImplementedError as e:
         st.set_status(doc_id, "review", stage="extract", error=str(e))
         emit("review", str(e))
+        log.warning("process review: %s — %s", doc_id, e)
         return "review"
     except Exception as e:
         st.set_status(doc_id, "error", error=str(e))
         emit("error", str(e))
+        log.exception("process error: %s — %s", doc_id, e)
         return "error"

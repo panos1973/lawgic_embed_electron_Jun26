@@ -102,6 +102,7 @@ window.api.onPipelineDone(({ code, error }) => {
 async function refreshStatus() {
   const r = await window.api.getStatus();
   if (r && r.counts) applyCounts(r.counts);
+  if (r && r.log && $('logPath')) $('logPath').textContent = r.log;
 }
 
 // ---- review ----
@@ -145,6 +146,12 @@ $('saveSettings').addEventListener('click', async () => {
   await window.api.saveSettings(obj);
   $('savedNote').textContent = 'saved ✓';
   setTimeout(() => ($('savedNote').textContent = ''), 2000);
+});
+
+// ---- logs ----
+$('openLogs').addEventListener('click', async () => {
+  const p = await window.api.openLogs();
+  if (p) $('logPath').textContent = p;
 });
 
 // ---- app version ----

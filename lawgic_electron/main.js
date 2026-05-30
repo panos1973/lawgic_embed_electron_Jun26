@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } = require('electron');
 const { spawn } = require('child_process');
 const readline = require('readline');
 const path = require('path');
@@ -155,6 +155,12 @@ function registerIpc(win) {
   });
   ipcMain.handle('settings:save', (_e, obj) => saveSettings(obj));
   ipcMain.handle('app:version', () => app.getVersion());
+  // the core writes lawgic.log next to the state DB; open that folder
+  ipcMain.handle('logs:open', () => {
+    const dir = path.dirname(loadSettings().stateDb);
+    shell.openPath(dir);
+    return path.join(dir, 'lawgic.log');
+  });
 }
 
 function createWindow() {
