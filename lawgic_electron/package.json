@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Lawgic FEK ingestion — Electron shell over the Python pipeline core",
   "main": "main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/panos1973/lawgic_embed_electron_Jun26.git"
+  },
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win -p never",
@@ -36,6 +40,11 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "panos1973",
+      "repo": "lawgic_embed_electron_Jun26"
     }
   }
 }
