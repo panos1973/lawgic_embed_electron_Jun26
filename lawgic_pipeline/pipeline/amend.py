@@ -105,20 +105,63 @@ def _resolve_reference(window: str, default_instrument: str) -> tuple[str, str, 
     return target_id, scope, True
 
 
+# Article-heading declaration of the amendment target, e.g.
+#   "... - Προσθήκη άρθρου 6Ε στον ν. 4186/2013"
+#   "... - Τροποποίηση άρθρου 82 ν. 4662/2020"
+# Modern Greek drafting names the TARGET law in the host article's heading, not
+# in the 240-char window before each verb. Using it fixes inserted/restated
+# articles being mis-attributed to the enacting law.
+_HEADING_TARGET = re.compile(
+    r"(?:Τροποποίηση|Προσθήκη|Αντικατάσταση|Κατάργηση|Αναρίθμηση)[^\n]{0,90}?"
+    r"(?:άρθρ\w+\s+(?P<art>\d+[Α-Ωα-ω]?))?[^\n]{0,40}?"
+    r"(?:στον?\s+)?(?P<type>ν\.|π\.?\s*δ\.)\s*(?P<num>\d{1,5})\s*/\s*(?P<year>\d{4})")
+
+
+def _declared_target(provision_text: str) -> tuple[str, str]:
+    """From the host article's heading, return (instrument_id, article) it amends.
+
+    instrument_id is '' when the heading declares no external law (a substantive
+    article that amends nothing). article is '' when only the law is named.
+    """
+    head = provision_text[:200]
+    m = _HEADING_TARGET.search(head)
+    if not m:
+        return "", ""
+    t = (m.group("type") or "").lower()
+    itype = TYPE_PD if t.startswith("π") else TYPE_NOMOS
+    iid = make_instrument_id(itype, int(m.group("num")), int(m.group("year")))
+    return iid, (m.group("art") or "")
+
+
 def extract_amendments(law: Law) -> Law:
     """Populate law.amendments with resolved AmendmentOps (no text mutation here)."""
+    own = law.instrument_id
     ordinal = 0
     for p in law.provisions:
         t = p.text_in_force
+        # the law the host article declares it is amending (heading), if any
+        declared_iid, declared_art = _declared_target(t)
         for op, verb in _VERB.items():
             for vm in re.finditer(verb, t):
-                ordinal += 1
                 window = t[max(0, vm.start() - _LOOKBACK):vm.start()]
                 target_id, scope, resolved = _resolve_reference(
-                    window, law.instrument_id)
-                # quoted replacement after the verb (for replaces/adds/consolidates)
+                    window, declared_iid or own)
+                # If the local window named no external instrument, the resolver
+                # defaulted to declared_iid/own. Prefer the heading-declared target
+                # so inserted/restated articles attach to the RIGHT (target) law.
+                if declared_iid and f"#" in target_id and target_id.startswith(own + "#"):
+                    rest = target_id[len(own):]            # '#αρ.5.παρ.2'
+                    target_id = declared_iid + rest
+                    resolved = True
+                # An edit whose target is THIS law and whose locator is just the
+                # host article being restated (no external law named anywhere) is
+                # the enacting article's own text, not an amendment — skip it.
+                if not declared_iid and target_id.startswith(own + "#") \
+                        and op in ("consolidates",):
+                    continue
                 quoted = _QUOTED.search(t, vm.end())
                 new_text = quoted.group(1).strip() if quoted else None
+                ordinal += 1
                 law.amendments.append(AmendmentOp(
                     op=op, target_id=target_id, scope=scope,
                     new_text=new_text, resolved=resolved,

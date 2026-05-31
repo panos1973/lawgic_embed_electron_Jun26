@@ -53,6 +53,39 @@ def _first_line(block: str) -> str:
     return ""
 
 
+def _quoted_spans(text: str) -> list[tuple[int, int]]:
+    """Char ranges enclosed in Greek guillemets « … » (depth-aware).
+
+    Amending laws quote the text they insert/replace inside « », and that quoted
+    block frequently contains its OWN 'Άρθρο 40Α', 'ΚΕΦΑΛΑΙΟ ΣΤ1' headers — but
+    those are articles of the TARGET law, not of this enacting law. We must not
+    segment on headers inside these spans; they belong to the host (amending)
+    article and travel with it. Returns top-level spans only (handles nesting).
+    """
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == "«":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "»" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                spans.append((start, i))
+                start = -1
+    # an unclosed « (truncated/missing close): treat to end of text so a dangling
+    # quote can't let inserted headers leak back in as real articles
+    if depth > 0 and start >= 0:
+        spans.append((start, len(text)))
+    return spans
+
+
+def _in_spans(pos: int, spans: list[tuple[int, int]]) -> bool:
+    return any(a < pos < b for a, b in spans)
+
+
 def _structural_path(state: dict) -> list[str]:
     """Human-readable structural prefix, e.g. ['ΜΕΡΟΣ ΠΡΩΤΟ', 'ΚΕΦΑΛΑΙΟ Α']."""
     out = []
@@ -65,9 +98,17 @@ def _structural_path(state: dict) -> list[str]:
 
 def segment(text: str, law: Law) -> Law:
     """Populate law.provisions (article-level) with full hierarchy context."""
+    # Headers inside « » quoted blocks are inserted/restated text of ANOTHER law
+    # (the amendment target), not articles of this one — exclude them so e.g.
+    # 'Άρθρο 40Α' quoted inside an amending article does not become ν.<this>#αρ.40Α
+    # and does not fragment the host article.
+    quoted = _quoted_spans(text)
+
     anchors = []
     for kind, rx in _ANCHORS:
         for m in rx.finditer(text):
+            if _in_spans(m.start(), quoted):
+                continue
             anchors.append((m.start(), m.end(), kind, m))
     anchors.sort(key=lambda a: a[0])
 
