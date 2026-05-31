@@ -18,6 +18,7 @@ import re
 
 from models import Law, Provision, make_provision_id
 from normalize import fold_for_bm25
+from greek_stem import stem_text
 
 # Structural + leaf anchors. All require the keyword at the start of a line
 # (headers in FEK sit on their own line, usually upper-case). The label group is
@@ -149,6 +150,7 @@ def segment(text: str, law: Law) -> Law:
                 book=state["book"], part=state["part"], chapter=state["chapter"],
                 hierarchy_path=path, text_in_force=body,
                 text_normalized=fold_for_bm25(body),
+                text_stemmed=stem_text(body),
                 content_hash=hashlib.sha256(body.encode()).hexdigest()))
             continue
 
@@ -176,6 +178,7 @@ def segment(text: str, law: Law) -> Law:
             book=state["book"], part=state["part"], chapter=state["chapter"],
             hierarchy_path=path, text_in_force=body,
             text_normalized=fold_for_bm25(body),
+            text_stemmed=stem_text(body),
             content_hash=hashlib.sha256(body.encode()).hexdigest()))
 
     # Fallback: instruments with no internal Άρθρο/ΠΑΡΑΡΤΗΜΑ structure (most FEK
@@ -194,5 +197,6 @@ def segment(text: str, law: Law) -> Law:
                 level="document", chunk_type="document",
                 hierarchy_path=law.instrument_id,
                 text_in_force=body, text_normalized=fold_for_bm25(body),
+                text_stemmed=stem_text(body),
                 content_hash=hashlib.sha256(body.encode()).hexdigest()))
     return law
