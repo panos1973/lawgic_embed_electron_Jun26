@@ -7,6 +7,8 @@ document (the list of chunks sent together), so a long law MUST be split or the
 API rejects it ("example ... too many tokens ... context window of 32000").
 """
 from __future__ import annotations
+import math
+import re
 import time
 from typing import Callable, Optional
 
@@ -38,6 +40,60 @@ def client():
 
 def _est_tokens(t: str) -> int:
     return max(1, int(len(t) / CHARS_PER_TOKEN))
+
+
+def _split_oversized(text: str, budget: int) -> list[str]:
+    """Split one over-budget chunk into <=budget sub-segments WITHOUT losing text.
+
+    Greedy, boundary-aware: accumulate paragraphs/sentences until the next piece
+    would exceed the budget. Falls back to a hard character cut only for a single
+    piece that is itself larger than the budget (e.g. a giant unbroken table row).
+    Used only for the rare provision that alone exceeds the 32k window — a normal
+    article never triggers this. Every character ends up in exactly one segment.
+    """
+    max_chars = int(budget * CHARS_PER_TOKEN)
+    if len(text) <= max_chars:
+        return [text]
+    # prefer splitting on paragraph, then sentence, then whitespace boundaries
+    pieces = re.split(r"(\n\n+|(?<=[.;·])\s+)", text)
+    pieces = [p for p in pieces if p and not p.isspace()]
+    segments: list[str] = []
+    cur = ""
+    for p in pieces:
+        # a single piece bigger than the budget: hard-cut it into max_chars slices
+        if len(p) > max_chars:
+            if cur:
+                segments.append(cur)
+                cur = ""
+            for i in range(0, len(p), max_chars):
+                segments.append(p[i:i + max_chars])
+            continue
+        if cur and len(cur) + len(p) > max_chars:
+            segments.append(cur)
+            cur = p
+        else:
+            cur += p
+    if cur:
+        segments.append(cur)
+    return segments or [text[:max_chars]]
+
+
+def _pool(vectors: list[list[float]]) -> list[float]:
+    """Mean-pool sub-segment vectors back into one, re-normalized to unit length.
+
+    voyage-context-3 returns unit vectors and the index uses DOT distance, so the
+    combined vector must also be unit length. The mean direction is the standard,
+    cheap way to represent a chunk that had to be embedded in pieces.
+    """
+    if len(vectors) == 1:
+        return vectors[0]
+    dim = len(vectors[0])
+    acc = [0.0] * dim
+    for v in vectors:
+        for j in range(dim):
+            acc[j] += v[j]
+    norm = math.sqrt(sum(x * x for x in acc)) or 1.0
+    return [x / norm for x in acc]
 
 
 def _plan_batches(chunks: list[str]) -> list[list[int]]:
@@ -85,11 +141,38 @@ def embed_law_chunks(ordered_chunks: list[str],
     if progress:
         progress(f"{len(ordered_chunks)} chunks → {len(batches)} batch(es), ~{est // 1000}k tok")
 
+    budget = int(CONTEXT_WINDOW_TOKENS * SAFETY)
     out: list[list[float]] = []
     t0 = time.perf_counter()
     for bi, idxs in enumerate(batches, 1):
         span = [ordered_chunks[i] for i in idxs]
         bt = time.perf_counter()
+
+        # rare case: a window holds a single chunk that alone exceeds the budget
+        # (e.g. a giant article or table). Split it, embed the pieces, and pool
+        # back to ONE vector so the 1-vector-per-chunk contract is preserved.
+        if len(span) == 1 and _est_tokens(span[0]) > budget:
+            segs = _split_oversized(span[0], budget)
+            log.warning("batch %d/%d: oversized chunk ~%d tok -> %d sub-segments (pooled)",
+                        bi, len(batches), _est_tokens(span[0]), len(segs))
+            if progress:
+                progress(f"batch {bi}/{len(batches)}: oversized chunk → "
+                         f"{len(segs)} sub-segments (pooled)")
+            try:
+                r = client().contextualized_embed(inputs=[segs], model=config.EMBED_MODEL,
+                                                  input_type="document",
+                                                  output_dimension=config.EMBED_DIM)
+            except Exception as e:
+                log.exception("batch %d/%d FAILED (oversized split): %s", bi, len(batches), e)
+                if progress:
+                    progress(f"batch {bi}/{len(batches)} failed: {e}")
+                raise
+            out.append(_pool(list(r.results[0].embeddings)))
+            dt = time.perf_counter() - bt
+            log.info("batch %d/%d: 1 oversized chunk (%d segs) in %.2fs",
+                     bi, len(batches), len(segs), dt)
+            continue
+
         try:
             r = client().contextualized_embed(inputs=[span], model=config.EMBED_MODEL,
                                               input_type="document",

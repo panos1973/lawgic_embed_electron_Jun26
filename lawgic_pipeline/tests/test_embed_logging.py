@@ -88,6 +88,57 @@ def test_embed_returns_one_vector_per_chunk(monkeypatch):
     assert fake.calls == 1                      # single batch
 
 
+# ── oversized-chunk splitter ──
+def test_split_oversized_covers_all_text_no_loss():
+    budget = 100                                # max_chars = 150
+    text = ("Πρώτη πρόταση. " * 20) + "\n\n" + ("Δεύτερη πρόταση· " * 20)
+    segs = ve._split_oversized(text, budget)
+    assert len(segs) > 1
+    max_chars = int(budget * ve.CHARS_PER_TOKEN)
+    assert all(len(s) <= max_chars for s in segs)        # each piece fits
+    # no text lost: every non-space char is preserved across the segments
+    assert "".join(segs).replace(" ", "").replace("\n", "") == \
+        text.replace(" ", "").replace("\n", "")
+
+
+def test_split_oversized_hard_cuts_unbroken_blob():
+    budget = 50
+    blob = "x" * 1000                            # no paragraph/sentence boundaries
+    segs = ve._split_oversized(blob, budget)
+    assert "".join(segs) == blob                 # every char kept
+    assert all(len(s) <= int(budget * ve.CHARS_PER_TOKEN) for s in segs)
+
+
+def test_pool_returns_unit_vector():
+    pooled = ve._pool([[3.0] + [0.0] * (config.EMBED_DIM - 1),
+                       [0.0, 4.0] + [0.0] * (config.EMBED_DIM - 2)])
+    norm = sum(x * x for x in pooled) ** 0.5
+    assert abs(norm - 1.0) < 1e-9               # re-normalized to unit length
+    assert len(pooled) == config.EMBED_DIM
+
+
+def test_embed_oversized_chunk_yields_one_pooled_vector(monkeypatch):
+    fake = _FakeClient()
+    monkeypatch.setattr(ve, "client", lambda: fake)
+    monkeypatch.setattr(ve, "CONTEXT_WINDOW_TOKENS", 100)   # budget 75, max ~112 chars
+    monkeypatch.setattr(ve, "SAFETY", 0.75)
+    small = "μικρό"
+    huge = "Πρόταση ένα. " * 60                  # ~720 chars -> well over budget, alone
+    out = ve.embed_law_chunks([small, huge])
+    assert len(out) == 2                         # STILL one vector per input chunk
+    assert all(len(v) == config.EMBED_DIM for v in out)
+
+
+def test_embed_oversized_preserves_count_in_mixed_law(monkeypatch):
+    fake = _FakeClient()
+    monkeypatch.setattr(ve, "client", lambda: fake)
+    monkeypatch.setattr(ve, "CONTEXT_WINDOW_TOKENS", 100)
+    monkeypatch.setattr(ve, "SAFETY", 0.75)
+    chunks = ["α", "β", "Μεγάλο. " * 80, "γ", "δ"]   # one oversized in the middle
+    out = ve.embed_law_chunks(chunks)
+    assert len(out) == len(chunks)               # 5 in -> 5 out, order preserved
+
+
 def test_embed_emits_progress(monkeypatch):
     fake = _FakeClient()
     monkeypatch.setattr(ve, "client", lambda: fake)
