@@ -114,11 +114,12 @@ def process_document(client, st: State, path: str,
     chash = _hash_file(path)
     doc_id = os.path.basename(path)
     log.info("process start: %s", doc_id)
-    st.upsert(doc_id, path, chash)
-    if st.seen_hash(chash):
-        st.set_status(doc_id, "done", stage="dedup")
-        emit("dedup", "unchanged — skipped")
-        log.info("dedup skip (unchanged): %s", doc_id)
+    # Atomically claim the doc: returns False if already done (dedup/resume) or
+    # being processed by another worker — so the parallel pool never double-embeds
+    # one law. claim() also marks it 'processing'.
+    if not st.claim(doc_id, path, chash):
+        emit("dedup", "unchanged or already in progress — skipped")
+        log.info("dedup/claim skip: %s", doc_id)
         return "done"
 
     try:

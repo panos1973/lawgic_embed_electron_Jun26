@@ -28,22 +28,26 @@ for _stream in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
+import threading
+
 import config
 from state import State
 
 JSON = False
+_EMIT_LOCK = threading.Lock()   # serialize stdout writes across worker threads
 
 
 def emit(obj: dict):
     if JSON:
         obj.setdefault("ts", time.strftime("%H:%M:%S"))   # event time for the UI log
         line = json.dumps(obj, ensure_ascii=False) + "\n"
-        try:
-            sys.stdout.write(line)
-        except UnicodeEncodeError:
-            # last-resort guard: never let a console-encoding issue kill the run
-            sys.stdout.write(line.encode("utf-8", "replace").decode("utf-8", "replace"))
-        sys.stdout.flush()
+        with _EMIT_LOCK:
+            try:
+                sys.stdout.write(line)
+            except UnicodeEncodeError:
+                # last-resort guard: never let a console-encoding issue kill the run
+                sys.stdout.write(line.encode("utf-8", "replace").decode("utf-8", "replace"))
+            sys.stdout.flush()
 
 
 def _human(stage, msg):
@@ -54,26 +58,66 @@ def _human(stage, msg):
 def cmd_ingest(folder: str):
     import weaviate_io as wio
     import orchestrator
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     st = State(config.STATE_DB)
     client = wio.connect()
     try:
         pdfs = sorted(glob.glob(os.path.join(folder, "**", "*.pdf"), recursive=True))
+        # Oldest-first by filename keeps a stable order; true chronological ordering
+        # is enforced later by the serial consolidation pass, which is order-safe.
         total = len(pdfs)
         emit({"type": "scan", "folder": folder, "total": total})
         if not JSON:
             print(f"Found {total} PDFs in {folder}")
-        for i, path in enumerate(pdfs, 1):
+
+        # PHASE 1 — parallel per-document ingest. Each law is processed start-to-
+        # finish by ONE worker (its chunks never split across workers), so within
+        # a law nothing is missed and identity/linkage is intact. Concurrency is
+        # bounded; the rate limiter throttles the API fan-out. Single doc -> 1
+        # worker (no thread overhead), preserving the simple serial path.
+        workers = max(1, int(getattr(config, "CONCURRENCY", 4))) if total > 1 else 1
+        done_n = [0]
+
+        def _one(path):
             name = os.path.basename(path)
-            emit({"type": "doc_start", "doc": name, "index": i, "total": total})
-            if not JSON:
-                print(f"[{i}/{total}] {name}")
+            emit({"type": "doc_start", "doc": name, "total": total})
 
             def progress(stage, msg, _n=name):
                 _human(stage, msg)
                 emit({"type": "stage", "doc": _n, "stage": stage, "msg": msg})
+            try:
+                status = orchestrator.process_document(client, st, path, progress)
+            except Exception as e:                       # worker isolation
+                status = "error"
+                emit({"type": "stage", "doc": name, "stage": "error", "msg": str(e)})
+            done_n[0] += 1
+            emit({"type": "doc_done", "doc": name, "status": status,
+                  "index": done_n[0], "total": total})
+            return status
 
-            status = orchestrator.process_document(client, st, path, progress)
-            emit({"type": "doc_done", "doc": name, "status": status})
+        if workers == 1:
+            for path in pdfs:
+                _one(path)
+        else:
+            emit({"type": "stage", "doc": "", "stage": "parallel",
+                  "msg": f"processing {total} docs, {workers} workers"})
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(_one, p) for p in pdfs]
+                for _f in as_completed(futures):
+                    pass                                 # progress already emitted
+
+        # PHASE 2 — serial cross-law consolidation (order-sensitive: amendment
+        # edges + version chains span laws and must NOT run concurrently). Safe,
+        # idempotent, skips targets not yet ingested.
+        try:
+            res = wio.consolidate_cross_law(client)
+            emit({"type": "stage", "doc": "", "stage": "consolidate",
+                  "msg": f"applied={res.get('applied',0)} already={res.get('already',0)} "
+                         f"skipped={res.get('skipped_missing_target',0)}"})
+        except Exception as e:                           # never fail the run on this
+            emit({"type": "stage", "doc": "", "stage": "consolidate",
+                  "msg": f"skipped: {e}"})
+
         counts = st.counts()
         emit({"type": "summary", "counts": counts})
         if not JSON:
