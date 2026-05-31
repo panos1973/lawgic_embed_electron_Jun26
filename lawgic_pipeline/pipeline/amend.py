@@ -184,10 +184,13 @@ def _clean_amendments(ops: list, own: str) -> list:
     """Drop noise edges and de-duplicate, preserving order.
 
     Removes three junk patterns seen in real v1.1.0 output, while keeping every
-    edge that carries a precise #αρ. target:
+    edge that carries a precise #αρ. target OR a resolved external instrument
+    (e.g. a whole-document repeal "Ο ν. 1234/2000 καταργείται." — no article, no
+    quoted text, but a real target):
       1. self-document dumps — no article locator, target == the enacting law,
          whole-article new_text (the law's own restated text mis-read as an edit);
-      2. fragments — no precise article target and a too-short new_text;
+      2. fragments — UNRESOLVED (no external instrument named), no precise article
+         target, and a too-short new_text (stray phrases the scanner picked up);
       3. exact duplicates — same (op, target, new_text).
     """
     out, seen = [], set()
@@ -198,8 +201,10 @@ def _clean_amendments(ops: list, own: str) -> list:
             # 1. self-referential document dump targeting the enacting law
             if tid == own or tid.startswith(own + "#"):
                 continue
-            # 2. fragment with no precise target and trivial replacement text
-            if len(nt) < _MIN_FRAGMENT:
+            # 2. fragment: only drop when the edge resolved to NO external target.
+            # A resolved document-scope edit (repeal/renumber of a named law) has
+            # no quoted text by nature and must be kept.
+            if not op.resolved and len(nt) < _MIN_FRAGMENT:
                 continue
         key = (op.op, tid, nt[:120])
         if key in seen:                               # 3. exact duplicate
