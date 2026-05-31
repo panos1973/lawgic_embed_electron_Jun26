@@ -71,7 +71,10 @@ KEYWORD_DOMAIN = {
     "μισθος": "labor", "εργαζομεν": "labor", "απολυση": "labor",
     "φορος": "tax", "φορολογ": "tax", "εισοδημα": "tax",
     "διαγωνισμος": "public_procurement", "αναθετουσα": "public_procurement",
-    "δεδομεν": "data_protection", "απορρητο": "data_protection",
+    # NOTE: bare "δεδομεν" removed — it matches generic "δεδομένα/δεδομένο" (facts/
+    # data) and mislabeled e.g. market-inspection articles as data_protection. Real
+    # personal-data law is caught precisely by CODE_DOMAIN (προσωπικά δεδομένα/GDPR).
+    "προσωπικα δεδομεν": "data_protection", "απορρητο": "data_protection",
     "μετοχ": "corporate", "εταιρ": "corporate",
     "περιβαλλον": "environmental", "ενεργειακ": "energy",
     "συνταγμα": "constitutional", "συνταγματικ": "constitutional",
@@ -89,22 +92,27 @@ def _add(p, dom):
         p.legal_domain.append(dom)
 
 
-def _domains_for(hay: str) -> list[str]:
-    """Return the ordered legal_domain labels a text matches.
+def _domains_for(text: str, title: str = "") -> list[str]:
+    """Return the ordered legal_domain labels a provision matches.
 
-    Layer 1 = cited-code/framework patterns (high precision); the folded-keyword
-    fallback fires only when no cited-code pattern matched. Shared by
-    classify_domain and the ΔΚΝ classifier so both read the same signals.
+    Layer 1 = cited-code/framework patterns (high precision) — scanned over the
+    provision text PLUS the law title (a code named in the title is a real
+    signal). Layer 2 = greedy folded-keyword fallback — scanned over the
+    PROVISION TEXT ONLY, never the title: a generic title word like
+    "Επαγγελματικής Εκπαίδευσης" would otherwise stamp 'education' onto every
+    article of the law (the ν.5082/2024 bug). Fallback fires only when Layer 1
+    found nothing. Shared by classify_domain and the ΔΚΝ classifier.
     """
     doms: list[str] = []
     matched = False
+    hay = f"{title}\n{text}" if title else text
     for pat, dom in CODE_DOMAIN.items():
         if re.search(pat, hay, re.IGNORECASE):
             if dom not in doms:
                 doms.append(dom)
             matched = True
     if not matched:
-        folded = fold_for_bm25(hay)
+        folded = fold_for_bm25(text)          # text only — NOT the title
         for kw, dom in KEYWORD_DOMAIN.items():
             if kw in folded and dom not in doms:
                 doms.append(dom)
@@ -114,8 +122,7 @@ def _domains_for(hay: str) -> list[str]:
 def classify_domain(law: Law) -> Law:
     """Layer 1 (cited-code) with a folded-keyword fallback per provision."""
     for p in law.provisions:
-        hay = f"{law.title}\n{p.text_in_force}"
-        for dom in _domains_for(hay):
+        for dom in _domains_for(p.text_in_force, law.title):
             _add(p, dom)
     return law
 
@@ -194,12 +201,11 @@ def classify_dkn(law: Law) -> Law:
     LLM `dkn` predictions (enrich_llm) still merge on top when a key is set.
     """
     for p in law.provisions:
-        hay = f"{law.title}\n{p.text_in_force}"
-        for dom in _domains_for(hay):
+        for dom in _domains_for(p.text_in_force, law.title):
             vol = _DOMAIN_TO_DKN.get(dom)
             if vol and vol not in p.domain_dkn:
                 p.domain_dkn.append(vol)
-        folded = fold_for_bm25(hay)
+        folded = fold_for_bm25(p.text_in_force)   # text only — not the title
         for kw, vol in _DKN_EXTRA.items():
             if kw in folded and vol not in p.domain_dkn:
                 p.domain_dkn.append(vol)
@@ -259,17 +265,30 @@ def classify_document_category(law: Law) -> Law:
                         TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD)
 
     folded = fold_for_bm25(law.title or "")
-    # deep hierarchy (ΒΙΒΛΙΟ/ΜΕΡΟΣ/ΚΕΦΑΛΑΙΟ) is strong codification evidence
-    deep = any(p.book or p.part for p in law.provisions)
+    # ΒΙΒΛΙΟ/ΜΕΡΟΣ deep hierarchy is only WEAK codification evidence: almost every
+    # modern multi-article law uses ΜΕΡΟΣ/ΚΕΦΑΛΑΙΟ, so it must not by itself force
+    # NOMOS_CODIFICATION (that mislabeled amending laws like ν.5082/2024). Require
+    # an explicit codification keyword in the title; use `deep` only as a weak
+    # tiebreak when no amendment/ratification signal is present.
+    deep = any(p.book for p in law.provisions)   # ΒΙΒΛΙΟ only — the real codex marker
+    # an amending law cites many "Τροποποίηση/Προσθήκη ... ν. XXXX" in its article
+    # headings; count them to distinguish amendment-heavy laws from substantive.
+    # The heading sits in the first line of the body (article_title is truncated),
+    # so scan the body head, not the stored title.
+    amend_titles = sum(
+        1 for p in law.provisions
+        if _signal(fold_for_bm25((p.text_in_force or "")[:160]), "amendment"))
     t = law.instrument_type
 
     if t in (TYPE_NOMOS, TYPE_AN, TYPE_ND):
         if _signal(folded, "ratification"):
             cat = "NOMOS_RATIFICATION"
-        elif _signal(folded, "codification") or deep:
+        elif _signal(folded, "codification"):
             cat = "NOMOS_CODIFICATION"
-        elif _signal(folded, "amendment"):
+        elif _signal(folded, "amendment") or amend_titles >= 3:
             cat = "NOMOS_AMENDMENT"
+        elif deep:
+            cat = "NOMOS_CODIFICATION"        # ΒΙΒΛΙΟ-level structure, no amend signal
         else:
             cat = "NOMOS_SUBSTANTIVE"
     elif t == TYPE_PD:
@@ -336,9 +355,16 @@ def enrich_llm(law: Law, progress=None) -> Law:
         except Exception:
             continue              # one bad provision shouldn't fail the law
         p.chunk_summary = data.get("summary", p.chunk_summary)
-        p.keywords = data.get("keywords", p.keywords) or p.keywords
+        kw = list(data.get("keywords") or [])
         ev = data.get("eurovoc") or []
         dkn = data.get("dkn") or []
+        # domain_dkn is a CONTROLLED vocabulary (the canonical Ραπτάρχης volumes).
+        # The LLM tends to also return free-form topical phrases ("Πρακτική
+        # άσκηση", "Χρεόγραφα"); keep only entries that are real ΔΚΝ volumes and
+        # route the rest to keywords so the field stays clean and filterable.
+        canon = [d for d in dkn if d in DKN_VOLUMES]
+        noncanon = [d for d in dkn if d not in DKN_VOLUMES]
         p.domain_eurovoc = list(dict.fromkeys(p.domain_eurovoc + ev))
-        p.domain_dkn = list(dict.fromkeys(p.domain_dkn + dkn))
+        p.domain_dkn = list(dict.fromkeys(p.domain_dkn + canon))
+        p.keywords = list(dict.fromkeys((kw or p.keywords) + noncanon)) or p.keywords
     return law

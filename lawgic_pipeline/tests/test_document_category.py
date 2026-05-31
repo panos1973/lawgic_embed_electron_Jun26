@@ -114,3 +114,32 @@ if __name__ == "__main__":
             print(f"ERROR {fn.__name__}: {type(e).__name__}: {e}")
     print(f"\n{passed}/{len(fns)} passed")
     sys.exit(0 if passed == len(fns) else 1)
+
+
+def test_amending_law_with_meros_is_not_codification():
+    """Regression: a law with deep ΜΕΡΟΣ/ΚΕΦΑΛΑΙΟ structure but whose articles are
+    overwhelmingly 'Τροποποίηση/Προσθήκη ... ν. XXXX' must be NOMOS_AMENDMENT, not
+    NOMOS_CODIFICATION (the ν.5082/2024 bug: ΜΕΡΟΣ-level depth wrongly forced
+    codification)."""
+    law = Law(instrument_id="ν.5082/2024", instrument_key="N5082/2024",
+              instrument_type=TYPE_NOMOS,
+              title="Ενίσχυση του Εθνικού Συστήματος Επαγγελματικής Εκπαίδευσης και άλλες διατάξεις")
+    for i in range(6):
+        law.provisions.append(Provision(
+            canonical_id=f"x#{i}", instrument_id="ν.5082/2024", instrument_key="N5082/2024",
+            instrument_type=TYPE_NOMOS, article_no=str(i), part="ΜΕΡΟΣ Α'",
+            text_in_force=f"Τροποποίηση άρθρου {i} ν. 4763/2020. Στο άρθρο {i}..."))
+    classify_document_category(law)
+    assert law.document_category == "NOMOS_AMENDMENT"
+
+
+def test_meros_only_no_amend_signal_is_substantive_not_codification():
+    """ΜΕΡΟΣ depth alone (no ΒΙΒΛΙΟ, no codification/amend signal) -> substantive."""
+    law = Law(instrument_id="ν.1/2024", instrument_key="x", instrument_type=TYPE_NOMOS,
+              title="Ρυθμίσεις για την ψηφιακή οικονομία")
+    law.provisions.append(Provision(
+        canonical_id="x#1", instrument_id="ν.1/2024", instrument_key="x",
+        instrument_type=TYPE_NOMOS, article_no="1", part="ΜΕΡΟΣ Α'",
+        text_in_force="Σκοπός του παρόντος είναι..."))
+    classify_document_category(law)
+    assert law.document_category == "NOMOS_SUBSTANTIVE"
