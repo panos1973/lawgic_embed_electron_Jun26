@@ -16,6 +16,18 @@ import os
 import sys
 import time
 
+# Force UTF-8 on stdout/stderr before anything writes. On Windows the frozen exe
+# defaults to the legacy cp1252 ("charmap") codec, which cannot encode Greek
+# (e.g. 'ν' ν) — emitting any Greek progress line then raises
+# "'charmap' codec can't encode character". Passing PYTHONUTF8/PYTHONIOENCODING
+# isn't reliable for a PyInstaller build whose streams are already created, so we
+# reconfigure explicitly here.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import config
 from state import State
 
@@ -25,7 +37,12 @@ JSON = False
 def emit(obj: dict):
     if JSON:
         obj.setdefault("ts", time.strftime("%H:%M:%S"))   # event time for the UI log
-        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        line = json.dumps(obj, ensure_ascii=False) + "\n"
+        try:
+            sys.stdout.write(line)
+        except UnicodeEncodeError:
+            # last-resort guard: never let a console-encoding issue kill the run
+            sys.stdout.write(line.encode("utf-8", "replace").decode("utf-8", "replace"))
         sys.stdout.flush()
 
 
