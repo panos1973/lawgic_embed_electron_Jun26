@@ -12,7 +12,7 @@ document.querySelectorAll('.tab').forEach((t) => {
     t.classList.add('active');
     $(t.dataset.tab).classList.add('active');
     if (t.dataset.tab === 'review') loadReview();
-    if (t.dataset.tab === 'settings') loadSettings();
+    if (t.dataset.tab === 'settings') { loadSettings(); loadCollections(); }
   });
 });
 
@@ -154,6 +154,52 @@ $('saveSettings').addEventListener('click', async () => {
 $('openLogs').addEventListener('click', async () => {
   const p = await window.api.openLogs();
   if (p) $('logPath').textContent = p;
+});
+
+// ---- Weaviate collections (reset for fast re-testing) ----
+function renderCollections(cols) {
+  const box = $('collectionList');
+  if (!cols || !cols.length) { box.innerHTML = '<div class="empty">— no data —</div>'; return; }
+  box.innerHTML = cols.map((c) => {
+    const count = c.count < 0 ? 'absent' : `${c.count} objects`;
+    return `<div class="coll-row">
+      <span class="coll-name">${c.name}</span>
+      <span class="coll-count">${count}</span>
+      <button class="btn danger sm" data-reset="${c.key}" data-name="${c.name}"
+              ${c.count < 0 ? 'disabled' : ''}>Reset</button>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('button[data-reset]').forEach((b) => {
+    b.addEventListener('click', () => resetCollection(b.dataset.reset, b.dataset.name));
+  });
+}
+
+async function loadCollections() {
+  $('collectionList').innerHTML = '<div class="empty">loading…</div>';
+  const r = await window.api.listCollections();
+  if (r && r.collections) renderCollections(r.collections);
+  else $('collectionList').innerHTML = `<div class="empty">error: ${(r && r.error) || 'failed'}</div>`;
+}
+
+async function resetCollection(key, name) {
+  if (!confirm(`Reset ${name}?\n\nThis permanently deletes all its embedded objects for this jurisdiction. The schema is kept. This cannot be undone.`)) return;
+  $('resetNote').textContent = `resetting ${name}…`;
+  const r = await window.api.resetCollection(key);
+  const res = (r && r.results && r.results[0]) || {};
+  $('resetNote').textContent = r && r.error ? `error: ${r.error}`
+    : `✓ ${name}: deleted ${res.deleted ?? 0}`;
+  setTimeout(() => ($('resetNote').textContent = ''), 4000);
+  loadCollections();
+}
+
+$('refreshCollections').addEventListener('click', loadCollections);
+$('resetAllCollections').addEventListener('click', async () => {
+  if (!confirm('Reset ALL collections?\n\nThis permanently deletes every embedded object across all 5 collections for this jurisdiction. The schemas are kept. This cannot be undone.')) return;
+  $('resetNote').textContent = 'resetting all…';
+  const r = await window.api.resetCollection('all');
+  $('resetNote').textContent = r && r.error ? `error: ${r.error}` : '✓ all collections reset';
+  setTimeout(() => ($('resetNote').textContent = ''), 4000);
+  loadCollections();
 });
 
 // ---- app version ----

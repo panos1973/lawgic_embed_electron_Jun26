@@ -25,6 +25,52 @@ def ensure_tenant(client, coll_name: str, tenant: str):
         coll.tenants.create([Tenant(name=tenant)])
 
 
+# ── collection registry + reset (for fast test cycles) ──
+# Stable keys -> collection names, so the UI can list/reset by key without
+# hardcoding the Jun2026* strings.
+def collection_registry() -> dict:
+    return {
+        "flat": config.FLAT_COLLECTION,
+        "document": config.GRAPH_DOCUMENT,
+        "article": config.GRAPH_ARTICLE,
+        "amendment": config.GRAPH_AMENDMENT,
+        "delegation": config.GRAPH_DELEGATION,
+    }
+
+
+def collection_count(client, name: str, tenant: str = None) -> int:
+    """Object count for one collection's tenant (-1 if the collection is absent)."""
+    tenant = tenant or config.DEFAULT_TENANT
+    if not client.collections.exists(name):
+        return -1
+    coll = client.collections.use(name)
+    if tenant not in set(coll.tenants.get().keys()):
+        return 0
+    res = coll.with_tenant(tenant).aggregate.over_all(total_count=True)
+    return int(res.total_count or 0)
+
+
+def reset_collection(client, name: str, tenant: str = None) -> dict:
+    """Wipe all objects of one collection for `tenant`, KEEPING the schema.
+
+    Implemented as tenant remove+recreate: instant, and it preserves the
+    collection's HNSW/RQ/BM25 config (unlike dropping the collection, which would
+    force a re-run of create_all_collections.py). Returns the before/after counts.
+    """
+    tenant = tenant or config.DEFAULT_TENANT
+    if not client.collections.exists(name):
+        return {"collection": name, "tenant": tenant, "deleted": 0,
+                "error": "collection does not exist"}
+    coll = client.collections.use(name)
+    before = collection_count(client, name, tenant)
+    existing = set(coll.tenants.get().keys())
+    if tenant in existing:
+        coll.tenants.remove([tenant])      # drops every object for this tenant
+    coll.tenants.create([Tenant(name=tenant)])   # recreate empty tenant
+    return {"collection": name, "tenant": tenant,
+            "deleted": before if before > 0 else 0}
+
+
 def _rfc3339(date: str | None) -> str | None:
     """'YYYY-MM-DD' -> RFC3339 ('YYYY-MM-DDT00:00:00Z') for Weaviate DATE fields."""
     if date and len(date) == 10 and date[4] == "-" and date[7] == "-":

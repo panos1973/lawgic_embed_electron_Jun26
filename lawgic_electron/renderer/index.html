@@ -124,6 +124,17 @@
           <code class="path" id="logPath">—</code>
         </div>
       </div>
+
+      <div class="panel">
+        <div class="panel-title">Weaviate collections
+          <span class="enc">· reset wipes a collection for fast re-testing</span></div>
+        <div class="row">
+          <button class="btn ghost" id="refreshCollections">Refresh counts</button>
+          <button class="btn danger" id="resetAllCollections">Reset ALL</button>
+          <span class="saved" id="resetNote"></span>
+        </div>
+        <div id="collectionList" class="collections"></div>
+      </div>
     </section>
   </main>
 

@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('api', {
   saveSettings: (obj) => ipcRenderer.invoke('settings:save', obj),
   getAppVersion: () => ipcRenderer.invoke('app:version'),
   openLogs: () => ipcRenderer.invoke('logs:open'),
+  listCollections: () => ipcRenderer.invoke('collections:list'),
+  resetCollection: (key) => ipcRenderer.invoke('collections:reset', key),
   onPipelineEvent: (cb) => ipcRenderer.on('pipeline:event', (_e, o) => cb(o)),
   onPipelineDone: (cb) => ipcRenderer.on('pipeline:done', (_e, o) => cb(o)),
 });
