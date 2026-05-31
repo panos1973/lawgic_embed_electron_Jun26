@@ -171,6 +171,50 @@ def cmd_review():
     st.close()
 
 
+def cmd_collections():
+    """List the collections + their object counts (for the reset UI)."""
+    import weaviate_io as wio
+    client = wio.connect()
+    try:
+        reg = wio.collection_registry()
+        cols = []
+        for key, name in reg.items():
+            cols.append({"key": key, "name": name,
+                         "count": wio.collection_count(client, name)})
+        emit({"type": "collections", "collections": cols})
+        if not JSON:
+            for c in cols:
+                shown = "absent" if c["count"] < 0 else c["count"]
+                print(f"  {c['name']:<24} {shown}")
+    finally:
+        client.close()
+
+
+def cmd_reset(target: str):
+    """Reset (wipe objects, keep schema) one collection by key, or 'all'."""
+    import weaviate_io as wio
+    client = wio.connect()
+    try:
+        reg = wio.collection_registry()
+        if target == "all":
+            keys = list(reg.keys())
+        elif target in reg:
+            keys = [target]
+        else:
+            emit({"type": "reset", "error": f"unknown collection '{target}'"})
+            if not JSON:
+                print(f"Unknown collection '{target}'. Known: {', '.join(reg)} | all")
+            return
+        results = [wio.reset_collection(client, reg[k]) for k in keys]
+        emit({"type": "reset", "results": results})
+        if not JSON:
+            for r in results:
+                print(f"  reset {r['collection']}: deleted {r.get('deleted', 0)}"
+                      + (f" ({r['error']})" if r.get("error") else ""))
+    finally:
+        client.close()
+
+
 def cmd_retry():
     import weaviate_io as wio
     import orchestrator
@@ -211,12 +255,18 @@ def main():
     sub.add_parser("review")
     sub.add_parser("retry")
     sub.add_parser("consolidate")
+    sub.add_parser("collections")              # list collections + counts
+    rp = sub.add_parser("reset")               # wipe a collection (keep schema)
+    rp.add_argument("target", help="collection key (flat|document|article|"
+                                   "amendment|delegation) or 'all'")
     args = ap.parse_args(argv)
     import logsetup
     logsetup.init()                            # durable rotating file log
     {"ingest": lambda: cmd_ingest(args.folder), "status": cmd_status,
      "review": cmd_review, "retry": cmd_retry,
-     "consolidate": cmd_consolidate}[args.cmd]()
+     "consolidate": cmd_consolidate,
+     "collections": cmd_collections,
+     "reset": lambda: cmd_reset(args.target)}[args.cmd]()
 
 
 if __name__ == "__main__":

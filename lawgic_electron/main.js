@@ -149,6 +149,8 @@ function registerIpc(win) {
   ipcMain.on('pipeline:cancel', () => { if (activeChild) activeChild.kill(); });
   ipcMain.handle('pipeline:status', () => runOneShot(['status'], 'status'));
   ipcMain.handle('pipeline:review', () => runOneShot(['review'], 'review'));
+  ipcMain.handle('collections:list', () => runOneShot(['collections'], 'collections'));
+  ipcMain.handle('collections:reset', (_e, key) => runOneShot(['reset', key], 'reset'));
   ipcMain.handle('settings:get', () => {
     const s = loadSettings();
     return Object.assign(s, { encryptionAvailable: safeStorage.isEncryptionAvailable() });
