@@ -26,14 +26,29 @@ def test_plan_empty():
 def test_long_law_splits_into_multiple_windows():
     # regression: a law bigger than one 32k-token context window must be split,
     # not sent as a single document (which Voyage rejects with a 32000-token error).
-    big = "α" * 30_000                          # ~10k est tokens each (len//3)
-    chunks = [big] * 6                          # ~60k est tokens total > budget
+    big = "α" * 30_000                          # ~20k est tokens each (len/1.5)
+    chunks = [big] * 6                          # ~120k est tokens total > budget
     batches = ve._plan_batches(chunks)
     assert len(batches) > 1
     assert [i for b in batches for i in b] == list(range(6))   # all chunks, in order
     budget = int(ve.CONTEXT_WINDOW_TOKENS * ve.SAFETY)
     for b in batches:                           # no window exceeds the budget
         assert sum(ve._est_tokens(chunks[i]) for i in b) <= budget
+
+
+def test_real_greek_law_windows_stay_under_voyage_limit():
+    # mirrors the live failure: a 32-page law (~57 chunks, ~138k chars of Greek)
+    # was estimated at ~46k tokens (len//3) and packed into windows that were
+    # really ~46k tokens each -> Voyage rejected (>32000). With CHARS_PER_TOKEN=1.5
+    # every window must come out under the hard 32k limit.
+    chunks = ["άρθρο " + "λ" * 2400 for _ in range(57)]   # ~138k chars total
+    batches = ve._plan_batches(chunks)
+    assert len(batches) >= 1
+    assert [i for b in batches for i in b] == list(range(57))  # nothing dropped
+    for b in batches:
+        real_est = sum(ve._est_tokens(chunks[i]) for i in b)
+        assert real_est < 32_000          # the actual Voyage hard limit
+
 
 
 def test_plan_splits_by_chunk_count(monkeypatch):
