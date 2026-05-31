@@ -29,6 +29,11 @@ _ANCHORS = [
     ("chapter", re.compile(r"(?m)^\s*ΚΕΦΑΛΑΙΟ\s+" + _LABEL + r"\s*$")),
     ("section", re.compile(r"(?m)^\s*ΤΜΗΜΑ\s+" + _LABEL + r"\s*$")),
     ("article", re.compile(r"(?m)^\s*Άρθρο\s+(\d+[Α-Ωα-ω]?)\.?\s*$")),
+    # markdown-heading article (Azure DI path): "# Άρθρο 42 Τίτλος..." — heading
+    # and title share the line. Unambiguous (a bare 'Άρθρο 42' cross-reference in
+    # body text never starts with '#'), so this safely bounds the next article
+    # and stops the previous one from swallowing it (the art.41/42 bleed).
+    ("article", re.compile(r"(?m)^\s*#{1,6}\s*Άρθρο\s+(\d+[Α-Ωα-ω]?)\b.*$")),
     # spelled-out ordinals (κύρωση/ΠΝΠ/short laws): "Άρθρο πρώτο", "Άρθρο μόνο"
     ("article", re.compile(
         r"(?im)^\s*Άρθρο\s+(πρώτο|δεύτερο|τρίτο|τέταρτο|πέμπτο|έκτο|έβδομο|όγδοο|"

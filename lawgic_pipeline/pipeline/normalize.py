@@ -88,6 +88,11 @@ _ISSUE_STAMP = re.compile(
 _HEADER_FRAG = re.compile(
     r"^\s*\d{0,5}\s*(?:ΕΦΗΜΕΡΙ[ΔΑ∆]+Α?|ΚΥΒΕΡΝΗΣΕΩΣ)\s*\d{0,5}\s*$",
     re.MULTILINE)
+# Azure Document Intelligence page markers in its markdown output:
+# <!-- PageNumber="91" -->, <!-- PageHeader="..." -->, <!-- PageBreak -->.
+# These leak mid-article into chunk_text on the Azure path (table/scanned pages).
+_AZURE_COMMENT = re.compile(r"<!--\s*Page(?:Number|Header|Footer|Break)[^>]*-->",
+                            re.IGNORECASE)
 # Barcode line, e.g. *01000231402240020*
 _BARCODE = re.compile(r"^\s*\*\d{6,}\*\s*$", re.MULTILINE)
 # Εθνικό Τυπογραφείο trailer: everything from the printing-house anchor onward.
@@ -99,6 +104,7 @@ _TRAILER = re.compile(
 def strip_furniture(text: str) -> str:
     if not text:
         return text
+    text = _AZURE_COMMENT.sub("", text)       # Azure DI <!-- Page… --> comments
     text = _TRAILER.sub("", text)
     text = _RUN_HEADER.sub("", text)
     text = _ISSUE_STAMP.sub(" ", text)        # lone "Τεύχος A' 9/19.01.2024" stamps

@@ -166,7 +166,47 @@ def extract_amendments(law: Law) -> Law:
                     op=op, target_id=target_id, scope=scope,
                     new_text=new_text, resolved=resolved,
                     sub_edit_ordinal=str(ordinal)))
+    law.amendments = _clean_amendments(law.amendments, own)
     return law
+
+
+# Minimum length for a stand-alone replacement fragment (one with no precise
+# article target) to count as a real edit. Below this it is almost always a stray
+# phrase the scanner picked up ("Εφαρμογής", "που εδρεύει στη Σάμο", "Κεφάλαιο ΣΤ2").
+_MIN_FRAGMENT = 25
+
+
+def _has_article(target_id: str) -> bool:
+    return "#αρ." in (target_id or "")
+
+
+def _clean_amendments(ops: list, own: str) -> list:
+    """Drop noise edges and de-duplicate, preserving order.
+
+    Removes three junk patterns seen in real v1.1.0 output, while keeping every
+    edge that carries a precise #αρ. target:
+      1. self-document dumps — no article locator, target == the enacting law,
+         whole-article new_text (the law's own restated text mis-read as an edit);
+      2. fragments — no precise article target and a too-short new_text;
+      3. exact duplicates — same (op, target, new_text).
+    """
+    out, seen = [], set()
+    for op in ops:
+        tid = op.target_id or ""
+        nt = (op.new_text or "").strip()
+        if not _has_article(tid):
+            # 1. self-referential document dump targeting the enacting law
+            if tid == own or tid.startswith(own + "#"):
+                continue
+            # 2. fragment with no precise target and trivial replacement text
+            if len(nt) < _MIN_FRAGMENT:
+                continue
+        key = (op.op, tid, nt[:120])
+        if key in seen:                               # 3. exact duplicate
+            continue
+        seen.add(key)
+        out.append(op)
+    return out
 
 
 def consolidate(law: Law) -> Law:
