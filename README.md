@@ -1,12 +1,15 @@
 # Lawgic FEK Ingestion
 
-Builds the Greek-legal vector store that powers Lawbot: local FEK PDFs → analyse,
-segment, classify, embed → Weaviate (the `Jun2026*` collections).
+Builds the Greek-legal vector store that powers Lawbot: local FEK (Φ.Ε.Κ.) gazette
+PDFs → extract, normalize, segment, classify, amend/consolidate, embed → Weaviate
+(the `Jun2026*` collections). Ships as a headless Python core plus an Electron
+desktop app.
 
 ## Layout
-- `create_all_collections.py` — one-time: creates the 5 Weaviate collections.
+- `create_all_collections.py` — one-time: creates the 5 Weaviate collections (full schema, the source of truth for every field below).
 - `lawgic_pipeline/` — headless Python core (the actual ingestion). See its `CLAUDE.md`.
 - `lawgic_electron/` — desktop shell over the core (Ingest · Review · Settings).
+- `samplefek/` — sample FEK PDFs for testing.
 - `*.md` — design references (extraction front-end, KG schema, collection design, blueprint).
 
 ## Setup
@@ -22,18 +25,141 @@ cd lawgic_pipeline && pip install -r requirements.txt
 cd ../lawgic_electron && npm install && npm start
 ```
 
-## Status (what's real vs to-build)
-REAL: collections, state/dedup/resume, canonical IDs + citation parser, Greek
-normalization, voyage-context-3 embedding, tenant-aware Weaviate loader, orchestrator,
-CLI, Electron shell, cited-code domain classifier, provider-agnostic LLM (Claude /
-DeepSeek V4 / Gemini) for summaries+metadata.
+---
 
-TO BUILD (where accuracy is won — see lawgic_pipeline/CLAUDE.md):
-1. `pipeline/extract.py` — wire pdfplumber + Azure DI table technique (unblocks everything).
-2. `pipeline/segment.py` — full ΜΕΡΟΣ/ΚΕΦΑΛΑΙΟ/παρ/annex morphology (currently Άρθρο-only).
-3. `pipeline/amend.py` — amendment target resolution + consolidation to text_in_force.
-4. domain classifier trained on GLC/Raptarchis47k for `domain_dkn`.
+## Technologies
+
+| Layer | Technology | Role |
+|-------|-----------|------|
+| **Vector / graph DB** | **Weaviate Cloud** (≥1.32, client ≥4.16.4) | Stores the legal data: chunks (with vectors) + graph nodes/edges. Multi-tenant, replicated. |
+| **Embeddings** | **Voyage AI `voyage-context-3`** (1024-d, contextualized) | Turns provision text into vectors. Self-provided to Weaviate. |
+| **Rerank** | **Voyage AI `rerank-2.5`** | Query-time re-ranking (retrieval side). |
+| **OCR / tables** | **Azure Document Intelligence** | Table-heavy / scanned pages; structured table extraction. |
+| **PDF text** | **pdfplumber / pdfminer.six** | Born-digital PDF text + layout. |
+| **Enrichment LLM** | **Anthropic Claude / DeepSeek / Gemini** (provider-agnostic) | Summaries, keywords, EUROVOC, extra ΔΚΝ. Optional — skips without a key. |
+| **Local state** | **SQLite** | Per-document pipeline state (resume, dedup). Not legal data. |
+| **Core** | **Python 3.11** | Ingestion pipeline + CLI. |
+| **Desktop** | **Electron** (Node 20) | UI shell; spawns the core, encrypts secrets at rest (OS keychain). |
+| **Packaging** | **PyInstaller** + **electron-builder** | Freeze core → bundle Windows `.exe` (no Python needed on the user's machine). |
+
+---
+
+## Data stores — what is saved where
+
+### 1. Weaviate Cloud — the legal data (5 collections, all multi-tenant by jurisdiction, replication factor 3)
+
+| Collection | Vectors? | One row = | Stores |
+|------------|:--------:|-----------|--------|
+| **`Jun2026GRLegaDocs`** (flat) | ✅ | one **chunk / provision** | The primary hybrid-search target. Full searchable text + all classification/metadata. **This is the main embedded collection.** |
+| **`Jun2026LawArticle`** (graph) | ✅ | one **article** (+ version) | Article node with versioning (`version`, `valid_from/to`, `is_current`) and cross-references; also embedded. |
+| **`Jun2026LawDocument`** (graph) | — | one **law / document** | Document-level metadata node (FEK identity, type, category, dates). No vectors. |
+| **`Jun2026Amendment`** (graph) | — | one **amendment edge** | "law X article N replaces/adds/repeals law Y article M" + the new text. No vectors. |
+| **`Jun2026Delegation`** (graph) | — | one **delegation edge** | FEK B implementing act → FEK A enabling authority. No vectors. |
+
+Idempotent: every object's UUID is a deterministic `generate_uuid5` of its
+`canonical_id`, so re-ingesting upserts instead of duplicating.
+
+### 2. SQLite (`lawgic_state.db`) — pipeline state only (never the legal text)
+One row per document: `doc_id`, `path`, `content_hash` (dedup), `status`
+(`pending|processing|done|review|error`), last `stage`, `confidence`, `error`,
+timestamps. Drives **resume** and **skip-unchanged** dedup. Lives in the app's
+data dir (Electron `userData`).
+
+### 3. `lawgic.log` — rotating run log
+Next to the state DB. Stage-by-stage record including per-batch embedding
+telemetry and full tracebacks. Openable from the app (Settings → Open logs folder).
+
+---
+
+## Embedding specification — the full spec of what we embed
+
+### Model & vector
+- **Model:** `voyage-context-3` — *contextualized* embeddings: a law's chunks are
+  embedded together so each provision vector carries surrounding-article context.
+- **Dimensions:** **1024**, unit-normalized.
+- **`input_type`:** `document` at ingest, `query` at search time.
+- **Provided to Weaviate as self-provided vectors** (no server-side vectorizer).
+- **Context window:** **32,000 tokens per input document.** A law longer than this
+  is split into multiple context windows (budget = `0.75 × 32k`); chunks share
+  context within a window. (`voyage_embed.py`.)
+
+### What text gets embedded
+- The vector is computed from **`text_in_force`** — the provision's **consolidated,
+  currently-in-force text** (after amendments are applied), *not* the raw enacted
+  text. This is what lands in `chunk_text`.
+- **Chunk granularity:** one chunk per **article** (and, where segmented, per
+  paragraph), to preserve a self-contained semantic unit.
+- **Tables:** `chunk_text` holds the **markdown** table (embedded for semantic
+  search); `table_json` holds the **structured rows/columns** for exact cell lookup.
+
+### Vector index & search characteristics (both vector collections)
+- **Index:** HNSW + **8-bit Rotational Quantization (RQ)**, **DOT** distance
+  (for unit-normalized vectors).
+- **HNSW:** `ef=200`, `ef_construction=256`, `max_connections=32`, RQ `rescore_limit=200`
+  (over-fetch compressed, re-rank full-precision).
+- **Hybrid (BM25) side:** `b=0.3`, `k1=1.5` (tuned for long Greek legal text),
+  Greek stopword list, Snowball-stemmed `*_stemmed` companion fields.
+- **Tokenization per field:** `WORD` (searchable text), `TRIGRAM` (titles/summaries,
+  fuzzy), `FIELD` (ids/urls, exact), `LOWERCASE` (`canonical_id` / `hierarchy_path`,
+  keeps `Ν.5090/2024` a single token).
+
+### Metadata fields written per chunk (`Jun2026GRLegaDocs`)
+These are the fields the loader populates for every embedded provision today
+(`weaviate_io.py` → `_flat_props`):
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `canonical_id` | text (LOWERCASE) | Pinpoint id, e.g. `ν.4675/2024#αρ.24.παρ.2` (exact match) |
+| `instrument_key` | text (FIELD) | ASCII citation key, e.g. `N4675/2024` |
+| `document_type` | text | `NOMOS \| PD \| PNP \| KYA \| YA \| EGKYKLIOS \| PSIFISMA \| AN \| ND \| VD` |
+| `law_number` | text | e.g. `5090/2024` |
+| `fek_reference` | text | `{series}_{year}_{number}`, e.g. `A_2024_52` |
+| `article_number` | text | e.g. `5`, `12a`, `103` |
+| `article_title` | text (TRIGRAM) | Article heading |
+| `legal_force_status` | text | `in_force \| repealed \| amended \| suspended \| pending` |
+| `chunk_type` | text | `article \| paragraph \| table \| preamble \| ...` |
+| `hierarchy_path` | text (LOWERCASE) | `Ν.5090/2024 > ΚΕΦΑΛΑΙΟ Α > Άρθρο 5` |
+| `legal_domain` | text[] | Fast 17-label subject enum (labor, tax, criminal, …) |
+| `domain_dkn` | text[] | Ραπτάρχης ΔΚΝ top-level subject volumes (deterministic) |
+| `domain_eurovoc` | text[] | EUROVOC descriptors (LLM, when enabled) |
+| `keywords` | text[] | 5–10 Greek keywords |
+| `chunk_summary` | text (TRIGRAM) | 2–3 sentence Greek summary |
+| `chunk_text` | text (WORD) | **Embedded text** — in-force provision text / markdown table |
+| `text_normalized` | text (WORD) | Accent-folded text for diacritic-insensitive Greek BM25 |
+| `table_json` | text (FIELD) | Structured table for exact cell lookup |
+| `amends_provisions` | text[] | What this provision amends |
+| `amended_by_provisions` | text[] | What amends this provision |
+| `external_law_references` | text[] | Cited laws, e.g. `['4808/2021','4172/2013']` |
+| `language` | text | `el` |
+
+> The flat collection's **full schema declares ~58 properties** (penalties, EU
+> transposition, court refs, blob URLs, English semantic tags, etc.) as a forward
+> superset; `create_all_collections.py` is the authoritative list. The table above
+> is the ~22-field subset the pipeline writes today. The `Jun2026LawArticle`
+> collection adds versioning fields (`version`, `valid_from/to`, `is_current`,
+> `content_hash`) and graph references (`document`, `supersedes_article`).
+
+### Controlled vocabularies (used identically across collections)
+- **`document_type`:** `NOMOS | PD | PNP | KYA | YA | EGKYKLIOS | PSIFISMA | AN | ND | VD`
+- **amendment `action`:** `repeals | replaces | adds | amends | modifies | renumbers | consolidates | none`
+- **amendment `scope`:** `document | article | paragraph | case | subcase`
+
+---
+
+## Status (what's real vs to-build)
+**REAL:** collections + full schema, state/dedup/resume, canonical IDs + citation
+parser, Greek normalization, contextualized voyage-context-3 embedding (windowed to
+the 32k limit), tenant-aware Weaviate loader, orchestrator, CLI, Electron shell,
+deterministic domain + document-category + ΔΚΝ classifiers, provider-agnostic LLM
+enrichment, embedding telemetry + rotating log.
+
+**TO BUILD (where accuracy is won — see `lawgic_pipeline/CLAUDE.md`):**
+1. Segmentation of **amending laws** (articles that quote/insert articles of other
+   laws; ΜΕΡΟΣ/ΚΕΦΑΛΑΙΟ/παρ/annex morphology).
+2. `pipeline/amend.py` — amendment target resolution + cross-law consolidation.
+3. Trained ΔΚΝ model (GLC/Raptarchis47k) to augment the deterministic volumes.
 
 ## Security
-Never commit API keys. `create_all_collections.py` must read the Weaviate key from an
-env var before this repo is pushed; rotate the previously-exposed key.
+Never commit API keys. `create_all_collections.py` reads the Weaviate key from an
+env var; rotate any previously-exposed key. Desktop secrets are encrypted at rest
+via the OS keychain (`safeStorage`).

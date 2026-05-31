@@ -29,11 +29,16 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic")   # anthropic | deepseek | gemini
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")   # anthropic | deepseek | gemini
 LLM_MODEL = os.environ.get("LLM_MODEL", "")                  # blank -> provider default
 LLM_THINKING = os.environ.get("LLM_THINKING", "off").lower() in ("on", "true", "1")
 LLM_REASONING_EFFORT = os.environ.get("LLM_REASONING_EFFORT", "high")  # low|medium|high (DeepSeek, when thinking on)
 LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0"))
+
+# Amendment extractor: "deterministic" (pattern-based amend.py) or "llm"
+# (amend_llm.py, provider-agnostic via LLM_PROVIDER). Default stays deterministic
+# until the LLM extractor is validated against the gold edges (benchmark).
+AMEND_EXTRACTOR = os.environ.get("AMEND_EXTRACTOR", "deterministic")  # deterministic | llm
 
 # sdk: which client. base_url: OpenAI-compatible endpoint (None = native). key: config attr.
 PROVIDERS = {
@@ -41,7 +46,9 @@ PROVIDERS = {
                   "key": "ANTHROPIC_API_KEY", "default_model": "claude-haiku-4-5"},
     "deepseek":  {"sdk": "openai",
                   "base_url": "https://api.deepseek.com",
-                  "key": "DEEPSEEK_API_KEY", "default_model": "deepseek-v4-flash"},
+                  # DeepSeek V4 Pro, run non-thinking (LLM_THINKING=off). Confirm
+                  # the exact model id against the DeepSeek API if it changes.
+                  "key": "DEEPSEEK_API_KEY", "default_model": "deepseek-v4-pro"},
     "gemini":    {"sdk": "openai",
                   "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
                   "key": "GEMINI_API_KEY", "default_model": "gemini-2.5-flash"},

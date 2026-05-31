@@ -1,0 +1,21 @@
+{
+  "_comment": "Gold amendment edges (seeded from the existing Gemini-extracted Feb2026Amendment data). Key = source law number (the act making the change). Drop the matching source-law text/PDF into the --laws-dir as '<source_law>.pdf' or '<source_law>.txt' to score the new extractor against these. Self-loop entries (source==target) are marked suspect:true — a correct extractor should NOT reproduce them as cross-law edges.",
+  "4555": [
+    {"target_law": "3852/2010", "target_article": "140", "action": "replaces", "scope": "article"}
+  ],
+  "5056": [
+    {"target_law": "3852/2010", "target_article": "67", "action": "replaces", "scope": "phrase"}
+  ],
+  "4654": [
+    {"target_law": "26/2012", "target_article": "100", "action": "replaces", "scope": "paragraph"}
+  ],
+  "104/2018": [
+    {"target_law": "7/2017", "target_article": "20", "action": "adds", "scope": "case"}
+  ],
+  "351/1991": [
+    {"target_law": "351/1991", "target_article": "7", "action": "replaces", "scope": "case", "suspect": true}
+  ],
+  "66/2024": [
+    {"target_law": "66/2024", "target_article": "3", "action": "replaces", "scope": "phrase", "suspect": true}
+  ]
+}
