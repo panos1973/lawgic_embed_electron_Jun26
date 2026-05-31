@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config  # noqa: E402
 import weaviate_io as wio  # noqa: E402
+from state import State  # noqa: E402
 
 
 class _FakeTenants:
@@ -104,6 +105,19 @@ def test_reset_absent_collection_reports_error():
     res = wio.reset_collection(c, "Nope", "gr")
     assert res["deleted"] == 0
     assert "does not exist" in res["error"]
+
+
+
+# ── ingest-history reset (local SQLite dedup) ──
+def test_state_reset_clears_history_and_undedups(tmp_path):
+    st = State(str(tmp_path / "s.db"))
+    st.claim("d1", "/p1", "h1"); st.set_status("d1", "done", stage="load")
+    st.claim("d2", "/p2", "h2"); st.set_status("d2", "done", stage="load")
+    assert st.counts().get("done") == 2
+    assert st.reset() == 2
+    assert st.counts() == {}
+    assert st.claim("d1", "/p1", "h1") is True   # no longer deduped
+    st.close()
 
 
 if __name__ == "__main__":
