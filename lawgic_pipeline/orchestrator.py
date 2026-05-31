@@ -73,7 +73,14 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
     law = segment.segment(seg.text, law)
     # Amend BEFORE classify/embed: consolidation rewrites text_in_force to the
     # in-force version, which is what domain signal, summary and vectors must use.
-    law = amend.extract_amendments(law)
+    if config.AMEND_EXTRACTOR == "llm":
+        try:
+            import pipeline.amend_llm as amend_llm
+            law = amend_llm.extract_amendments_llm(law)
+        except SystemExit:
+            law = amend.extract_amendments(law)        # no LLM key -> deterministic
+    else:
+        law = amend.extract_amendments(law)
     law = amend.consolidate(law)
     law = delegate.extract_delegations(law, full_text=seg.text)
     law = refs.extract_external_refs(law)
