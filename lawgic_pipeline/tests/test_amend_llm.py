@@ -69,7 +69,7 @@ def test_adds_with_position():
     assert op.op == "adds"
     assert op.target_id == "ν.5090/2024#αρ.13"     # in-law (target_law null)
     assert op.resolved is True
-    assert "μετά" in op.target_raw
+    assert op.new_text == "18. …"
 
 
 def test_self_loop_guard_demotes_to_in_law():

@@ -130,12 +130,10 @@ def extract_amendments_llm(law: Law,
                 op=_norm_action(a.get("action")),
                 scope=_norm_scope(a.get("scope")),
                 target_id=tid,
-                target_raw=(a.get("position") or "")[:160] or text[:160],
-                new_text=new_text,
+                new_text=new_text or None,
                 effective_date=law.fek_date or None,
-                sub_edit_ordinal=ordinal,
+                sub_edit_ordinal=str(ordinal),
                 resolved=bool(target_law is None),  # in-law targets resolve locally
-                source_article_no=p.article_no,
             ))
     log.info("amend_llm %s: %d op(s)", law.instrument_id, len(law.amendments))
     return law
