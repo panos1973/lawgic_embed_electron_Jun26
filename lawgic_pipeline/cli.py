@@ -215,6 +215,18 @@ def cmd_reset(target: str):
         client.close()
 
 
+def cmd_reset_state():
+    """Clear local ingest history (dedup/resume) so docs re-process next run."""
+    st = State(config.STATE_DB)
+    try:
+        n = st.reset()
+        emit({"type": "reset_state", "cleared": n})
+        if not JSON:
+            print(f"Ingest history cleared: {n} record(s)")
+    finally:
+        st.close()
+
+
 def cmd_retry():
     import weaviate_io as wio
     import orchestrator
@@ -256,6 +268,7 @@ def main():
     sub.add_parser("retry")
     sub.add_parser("consolidate")
     sub.add_parser("collections")              # list collections + counts
+    sub.add_parser("reset-state")              # clear local ingest history
     rp = sub.add_parser("reset")               # wipe a collection (keep schema)
     rp.add_argument("target", help="collection key (flat|document|article|"
                                    "amendment|delegation) or 'all'")
@@ -266,6 +279,7 @@ def main():
      "review": cmd_review, "retry": cmd_retry,
      "consolidate": cmd_consolidate,
      "collections": cmd_collections,
+     "reset-state": cmd_reset_state,
      "reset": lambda: cmd_reset(args.target)}[args.cmd]()
 
 

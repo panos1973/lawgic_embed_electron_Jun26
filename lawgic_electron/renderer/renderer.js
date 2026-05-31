@@ -156,6 +156,15 @@ $('openLogs').addEventListener('click', async () => {
   if (p) $('logPath').textContent = p;
 });
 
+$('resetState').addEventListener('click', async () => {
+  if (!confirm('Reset ingest history?\n\nClears the local record of processed documents so they will be re-embedded on the next run. Does not delete anything in Weaviate (vectors are overwritten on re-ingest).')) return;
+  $('resetStateNote').textContent = 'clearing…';
+  const r = await window.api.resetState();
+  $('resetStateNote').textContent = r && typeof r.cleared === 'number'
+    ? `✓ cleared (${r.cleared})` : `error: ${(r && r.error) || 'failed'}`;
+  setTimeout(() => ($('resetStateNote').textContent = ''), 4000);
+});
+
 // ---- Weaviate collections (reset for fast re-testing) ----
 function renderCollections(cols) {
   const box = $('collectionList');

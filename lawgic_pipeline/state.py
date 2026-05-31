@@ -117,6 +117,19 @@ class State:
                 "SELECT status, COUNT(*) c FROM documents GROUP BY status").fetchall()
             return {r["status"]: r["c"] for r in rows}
 
+    def reset(self) -> int:
+        """Clear the ingest history (dedup/resume), returning rows removed.
+
+        After this, previously-'done' documents are no longer skipped and will be
+        re-processed on the next ingest. Does NOT touch Weaviate — vectors there
+        are upserted by deterministic UUID, so re-ingesting overwrites them.
+        """
+        with self._lock:
+            n = self.db.execute("SELECT COUNT(*) c FROM documents").fetchone()["c"]
+            self.db.execute("DELETE FROM documents")
+            self.db.commit()
+            return int(n)
+
     def close(self):
         with self._lock:
             self.db.close()
