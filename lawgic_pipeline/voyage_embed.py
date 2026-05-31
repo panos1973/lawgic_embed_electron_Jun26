@@ -15,12 +15,15 @@ import config
 import logsetup
 
 _client = None
-# voyage-context-3 context window: 32k tokens per input document. We pack chunks
-# into windows that stay under SAFETY*32k (conservative — token estimate is
-# char-based, and Greek tokenizes denser than the estimate assumes).
+# voyage-context-3 context window: 32k tokens per input document (the list of
+# chunks sent together). We pack chunks into windows under SAFETY*32k.
 CONTEXT_WINDOW_TOKENS = 32_000
 MAX_CHUNKS = 16_000          # voyage per-request chunk cap
 SAFETY = 0.75
+# Greek legal text tokenizes DENSELY: ~1.5 chars/token (the old embedder's
+# proven value). Using 3 here under-counted by ~2x, so a window we estimated at
+# 23k was really ~46k tokens and Voyage rejected it (>32k). Stay conservative.
+CHARS_PER_TOKEN = 1.5
 
 log = logsetup.get("embed")
 
@@ -34,7 +37,7 @@ def client():
 
 
 def _est_tokens(t: str) -> int:
-    return max(1, len(t) // 3)
+    return max(1, int(len(t) / CHARS_PER_TOKEN))
 
 
 def _plan_batches(chunks: list[str]) -> list[list[int]]:
