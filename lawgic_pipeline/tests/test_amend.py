@@ -136,3 +136,36 @@ if __name__ == "__main__":
             print(f"ERROR {fn.__name__}: {type(e).__name__}: {e}")
     print(f"\n{passed}/{len(fns)} passed")
     sys.exit(0 if passed == len(fns) else 1)
+
+
+def test_inserted_article_attributed_to_target_law_not_enacting():
+    """Heading declares the target law; an inserted article must attach there,
+    not to the enacting law (Bug 1)."""
+    from models import Law, Provision
+    law = Law(instrument_id="ν.5082/2024", instrument_key="N5082/2024",
+              instrument_type=TYPE_NOMOS)
+    law.provisions.append(Provision(
+        canonical_id="ν.5082/2024#αρ.43", instrument_id="ν.5082/2024",
+        instrument_key="N5082/2024", instrument_type=TYPE_NOMOS, article_no="43",
+        text_in_force=("Αρχηγείο - Τροποποίηση άρθρου 82 ν. 4662/2020\n"
+                       "Στο άρθρο 82 προστίθεται παρ. 3 ως εξής: «3. Νέο.»")))
+    extract_amendments(law)
+    tgts = [op.target_id for op in law.amendments]
+    assert any(t.startswith("ν.4662/2020#αρ.82") for t in tgts)   # right law
+    assert not any(t.startswith("ν.5082/2024#αρ.82") for t in tgts)  # not enacting
+
+
+def test_no_self_consolidate_for_own_restated_article():
+    """A substantive article restating its own text (no external law in heading)
+    must not produce a self-consolidates edge (Bug 2)."""
+    from models import Law, Provision
+    law = Law(instrument_id="ν.5082/2024", instrument_key="N5082/2024",
+              instrument_type=TYPE_NOMOS)
+    law.provisions.append(Provision(
+        canonical_id="ν.5082/2024#αρ.18", instrument_id="ν.5082/2024",
+        instrument_key="N5082/2024", instrument_type=TYPE_NOMOS, article_no="18",
+        text_in_force="Άρθρο 18 Φοίτηση\nδιαμορφώνεται ως εξής: «πλήρες κείμενο.»"))
+    extract_amendments(law)
+    self_consol = [op for op in law.amendments
+                   if op.op == "consolidates" and op.target_id.startswith("ν.5082/2024#")]
+    assert self_consol == []

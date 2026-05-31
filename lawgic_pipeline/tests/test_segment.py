@@ -150,3 +150,33 @@ if __name__ == "__main__":
             print(f"ERROR {fn.__name__}: {type(e).__name__}: {e}")
     print(f"\n{passed}/{len(fns)} passed")
     sys.exit(0 if passed == len(fns) else 1)
+
+
+def test_inserted_articles_in_guillemets_not_emitted_as_own():
+    """Articles quoted inside « » (inserted into another law) must NOT become
+    articles of THIS law, and must not fragment the host article."""
+    law = Law(instrument_id="ν.5082/2024", instrument_key="N5082/2024",
+              instrument_type=TYPE_NOMOS)
+    txt = (
+        "Άρθρο 13\n"
+        "Κέντρα - Προσθήκη Κεφαλαίου ΣΤ1 και άρθρων 40Α έως 40ΙΑ στον ν. 4763/2020\n"
+        "Μετά το άρθρο 40 του ν. 4763/2020 προστίθενται άρθρα 40Α έως 40ΙΑ ως εξής:\n"
+        "«ΚΕΦΑΛΑΙΟ ΣΤ1\n"
+        "Άρθρο 40Α\nΑποστολή.\n"
+        "Άρθρο 40Β\nΠροϋποθέσεις.»\n\n"
+        "Άρθρο 14\nΕπόμενο\nΚείμενο."
+    )
+    law = segment(txt, law)
+    nums = [p.article_no for p in law.provisions]
+    assert nums == ["13", "14"]                      # only real articles
+    assert "40Α" not in nums and "40Β" not in nums   # inserted ones masked
+    a13 = next(p for p in law.provisions if p.article_no == "13")
+    assert "Άρθρο 40Α" in a13.text_in_force          # host article stays whole
+
+
+def test_unclosed_guillemet_masks_to_end():
+    law = Law(instrument_id="ν.1/2024", instrument_key="x",
+              instrument_type=TYPE_NOMOS)
+    txt = "Άρθρο 1\nΕισαγωγή.\nπροστίθεται ως εξής:\n«Άρθρο 5\nΞένο.\nΆρθρο 6\nΚι άλλο."
+    law = segment(txt, law)
+    assert [p.article_no for p in law.provisions] == ["1"]   # 5,6 stay masked
