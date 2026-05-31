@@ -49,6 +49,9 @@ def complete(system: str, user: str, want_json: bool = True,
     _ensure_client()
     model = model_name()
 
+    import ratelimit
+    provider = config.LLM_PROVIDER
+
     if _kind == "anthropic":
         kwargs = dict(model=model, max_tokens=max_tokens, system=system,
                       messages=[{"role": "user", "content": user}])
@@ -57,7 +60,8 @@ def complete(system: str, user: str, want_json: bool = True,
             kwargs["temperature"] = 1.0          # required when thinking is on
         else:
             kwargs["temperature"] = config.LLM_TEMPERATURE
-        msg = _client.messages.create(**kwargs)
+        msg = ratelimit.with_retry(lambda: _client.messages.create(**kwargs),
+                                   provider=provider)
         return "".join(getattr(b, "text", "") for b in msg.content
                        if getattr(b, "type", "") == "text")
 
@@ -76,5 +80,6 @@ def complete(system: str, user: str, want_json: bool = True,
             kwargs["reasoning_effort"] = config.LLM_REASONING_EFFORT
         else:
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
-    resp = _client.chat.completions.create(**kwargs)
+    resp = ratelimit.with_retry(
+        lambda: _client.chat.completions.create(**kwargs), provider=provider)
     return resp.choices[0].message.content or ""

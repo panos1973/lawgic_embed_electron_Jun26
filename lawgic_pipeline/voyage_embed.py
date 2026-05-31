@@ -15,6 +15,7 @@ from typing import Callable, Optional
 import voyageai
 import config
 import logsetup
+import ratelimit
 
 _client = None
 # voyage-context-3 context window: 32k tokens per input document (the list of
@@ -159,9 +160,11 @@ def embed_law_chunks(ordered_chunks: list[str],
                 progress(f"batch {bi}/{len(batches)}: oversized chunk → "
                          f"{len(segs)} sub-segments (pooled)")
             try:
-                r = client().contextualized_embed(inputs=[segs], model=config.EMBED_MODEL,
-                                                  input_type="document",
-                                                  output_dimension=config.EMBED_DIM)
+                r = ratelimit.with_retry(
+                    lambda: client().contextualized_embed(
+                        inputs=[segs], model=config.EMBED_MODEL,
+                        input_type="document", output_dimension=config.EMBED_DIM),
+                    provider="voyage")
             except Exception as e:
                 log.exception("batch %d/%d FAILED (oversized split): %s", bi, len(batches), e)
                 if progress:
@@ -174,9 +177,11 @@ def embed_law_chunks(ordered_chunks: list[str],
             continue
 
         try:
-            r = client().contextualized_embed(inputs=[span], model=config.EMBED_MODEL,
-                                              input_type="document",
-                                              output_dimension=config.EMBED_DIM)
+            r = ratelimit.with_retry(
+                lambda: client().contextualized_embed(
+                    inputs=[span], model=config.EMBED_MODEL,
+                    input_type="document", output_dimension=config.EMBED_DIM),
+                provider="voyage")
         except Exception as e:
             log.exception("batch %d/%d FAILED (%d chunks): %s",
                           bi, len(batches), len(span), e)
