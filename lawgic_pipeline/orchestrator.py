@@ -88,7 +88,10 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
     law = enrich.classify_domain(law)
     law = enrich.classify_document_category(law)       # function taxonomy (deterministic)
     law = enrich.classify_dkn(law)                     # ΔΚΝ/Ραπτάρχης volumes (deterministic)
-    law = enrich.enrich_llm(law)                       # no-op without LLM key; merges extra dkn
+    # enrich_llm is one LLM call per provision — the slowest stage on a long law.
+    # Emit per-provision progress so the UI never looks frozen here.
+    emit("enrich", f"{law.instrument_id}: LLM enrichment ({len(law.provisions)} provisions)")
+    law = enrich.enrich_llm(law, progress=lambda m: emit("enrich", m))
     chunks = law.ordered_texts()
     emit("embed", f"{law.instrument_id}: embedding {len(chunks)} chunk(s)")
     log.info("embed %s: %d chunk(s)", law.instrument_id, len(chunks))

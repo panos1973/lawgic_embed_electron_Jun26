@@ -315,14 +315,23 @@ _SYSTEM = (
 )
 
 
-def enrich_llm(law: Law) -> Law:
+def enrich_llm(law: Law, progress=None) -> Law:
     """Per-provision summary + keywords + taxonomy via the configured LLM.
-    Skips silently if no provider key is set, so the pipeline never blocks on it."""
-    for p in law.provisions:
+    Skips silently if no provider key is set, so the pipeline never blocks on it.
+
+    Each provision is one LLM call, so for a long law this is the slowest stage.
+    `progress(msg)` (optional) is invoked per provision so the UI shows it is
+    alive instead of looking frozen between classify and embed."""
+    total = len(law.provisions)
+    for i, p in enumerate(law.provisions, 1):
+        if progress:
+            progress(f"{law.instrument_id}: provision {i}/{total}")
         try:
             out = llm.complete(_SYSTEM, p.text_in_force, want_json=True, max_tokens=700)
             data = json.loads(out)
         except SystemExit:
+            if progress:
+                progress("no LLM key — skipping enrichment")
             return law            # no API key configured — skip enrichment
         except Exception:
             continue              # one bad provision shouldn't fail the law
