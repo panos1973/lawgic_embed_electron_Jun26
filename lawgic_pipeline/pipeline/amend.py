@@ -27,6 +27,7 @@ import re
 from models import (Law, AmendmentOp, TYPE_NOMOS, TYPE_PD,
                     make_instrument_id, make_provision_id, make_decision_id)
 from normalize import fold_for_bm25
+from greek_stem import stem_text
 
 # Amending verb -> canonical op. Order matters only for reporting; each provision
 # is scanned for every verb.
@@ -235,6 +236,7 @@ def consolidate(law: Law) -> Law:
             target.text_as_enacted = target.text_as_enacted or target.text_in_force
             target.text_in_force = op.new_text
             target.text_normalized = fold_for_bm25(op.new_text)
+            target.text_stemmed = stem_text(op.new_text)
             target.version += 1
             target.amended_by = list(dict.fromkeys(
                 target.amended_by + [op.sub_edit_ordinal or "in-law"]))
