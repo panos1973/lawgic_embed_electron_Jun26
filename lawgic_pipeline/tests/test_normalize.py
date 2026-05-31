@@ -57,6 +57,24 @@ def test_strip_barcode_and_trailer():
     assert "ΕΞΥΠΗΡΕΤΗΣΗ" not in out and "*0100" not in out
 
 
+
+def test_strip_header_fragments_from_dewrapped_columns():
+    """Two-column dewrapping splits the running header into fragments the full
+    pattern misses: a lone issue stamp, the masthead word alone, and a page-number
+    +masthead. All must be stripped; real body text kept."""
+    body = ("ση των άρθρων 24Α και 33Α.\n"
+            "ΚΥΒΕΡΝΗΣΕΩΣ Τεύχος A' 9/19.01.2024\n"
+            "γ) Προστίθεται παράγραφος.\n"
+            "68 ΕΦΗΜΕΡΙΔΑ\n"
+            "Άρθρο 4 Σκοπός.\n"
+            "ΚΥΒΕΡΝΗΣΕΩΣ 69\n"
+            "Τέλος.")
+    out = strip_furniture(body)
+    assert "Τεύχος" not in out
+    assert "68 ΕΦΗΜΕΡΙΔΑ" not in out and "ΚΥΒΕΡΝΗΣΕΩΣ 69" not in out
+    assert "Προστίθεται παράγραφος" in out and "Άρθρο 4 Σκοπός" in out and "Τέλος" in out
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     p = 0

@@ -65,3 +65,21 @@ if __name__ == "__main__":
             print(f"ERROR {fn.__name__}: {type(e).__name__}: {e}")
     print(f"\n{passed}/{len(fns)} passed")
     sys.exit(0 if passed == len(fns) else 1)
+
+
+def test_title_does_not_leak_greedy_keyword_domain():
+    """Regression: a generic title word ('Εκπαίδευσης') must NOT stamp 'education'
+    onto an article whose own text is about something else (prices)."""
+    from pipeline.enrich import _domains_for
+    title = "Ενίσχυση του Εθνικού Συστήματος Επαγγελματικής Εκπαίδευσης"
+    price_text = ("Εξορθολογισμός και διαφάνεια τιμών. Οι αρχές έχουν πρόσβαση "
+                  "σε κάθε δεδομένο και έγγραφο.")
+    doms = _domains_for(price_text, title)
+    assert "education" not in doms          # title word must not leak
+    assert "data_protection" not in doms    # generic 'δεδομένο' must not match
+
+
+def test_personal_data_still_detected():
+    from pipeline.enrich import _domains_for
+    doms = _domains_for("Επεξεργασία προσωπικών δεδομένων κατά τον GDPR.")
+    assert "data_protection" in doms

@@ -78,6 +78,16 @@ def cid_ratio(text: str) -> float:
 _RUN_HEADER = re.compile(
     r"^\s*\d{0,5}\s*ΕΦΗΜΕΡΙ[ΔΑ∆]+Α?\s+Τ?ΗΣ\s+ΚΥΒΕΡΝΗΣΕΩΣ.*$",
     re.IGNORECASE | re.MULTILINE)
+# Header FRAGMENTS: two-column dewrapping splits the running header into pieces
+# that the full-header pattern misses — a lone issue stamp "Τεύχος A' 9/19.01.2024"
+# (series letter is often a Latin homoglyph A/B; keraia ’ or ΄), and the masthead
+# word alone on a line, optionally glued to a page number ("68 ΕΦΗΜΕΡΙΔΑ",
+# "ΚΥΒΕΡΝΗΣΕΩΣ 69"). These repeat on every page and must not enter provision text.
+_ISSUE_STAMP = re.compile(
+    r"\bΤεύχος\s+[ΑΒΓΔΕABΓ]['’΄ʼ]?\s*\d+/\d{1,2}\.\d{1,2}\.\d{4}")
+_HEADER_FRAG = re.compile(
+    r"^\s*\d{0,5}\s*(?:ΕΦΗΜΕΡΙ[ΔΑ∆]+Α?|ΚΥΒΕΡΝΗΣΕΩΣ)\s*\d{0,5}\s*$",
+    re.MULTILINE)
 # Barcode line, e.g. *01000231402240020*
 _BARCODE = re.compile(r"^\s*\*\d{6,}\*\s*$", re.MULTILINE)
 # Εθνικό Τυπογραφείο trailer: everything from the printing-house anchor onward.
@@ -91,7 +101,10 @@ def strip_furniture(text: str) -> str:
         return text
     text = _TRAILER.sub("", text)
     text = _RUN_HEADER.sub("", text)
+    text = _ISSUE_STAMP.sub(" ", text)        # lone "Τεύχος A' 9/19.01.2024" stamps
+    text = _HEADER_FRAG.sub("", text)         # lone masthead-word lines (± page no.)
     text = _BARCODE.sub("", text)
     # collapse the blank lines the removals leave behind
+    text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n[ \t]*\n([ \t]*\n)+", "\n\n", text)
     return text.strip()
