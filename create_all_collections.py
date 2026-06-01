@@ -333,8 +333,11 @@ try:
             Property(name="entities_mentioned", description="Ministries, agencies mentioned",
                      data_type=DataType.TEXT_ARRAY, tokenization=Tokenization.WORD),
 
-            # ── Stemmed (Greek BM25) ──
-            Property(name="chunk_text_stemmed", description="Snowball-stemmed chunk_text",
+            # ── Stemmed (Greek BM25 recall) ──
+            # text_stemmed mirrors text_normalized (same source = chunk_text) but
+            # Snowball-stemmed, so inflected Greek collapses to one term. Name kept
+            # parallel to text_normalized; the loader writes Provision.text_stemmed.
+            Property(name="text_stemmed", description="Snowball-stemmed chunk_text (Greek inflection recall)",
                      data_type=DataType.TEXT, tokenization=Tokenization.WORD,
                      index_searchable=True, index_filterable=False),
             Property(name="chunk_summary_stemmed", description="Snowball-stemmed chunk_summary",
@@ -585,8 +588,13 @@ try:
                      data_type=DataType.TEXT_ARRAY, tokenization=Tokenization.WORD),
             Property(name="implements_eu_articles", description="['2024/1385:art19']",
                      data_type=DataType.TEXT_ARRAY, tokenization=Tokenization.WORD),
-            # Stemmed
-            Property(name="chunk_text_stemmed", description="Snowball-stemmed chunk_text",
+            # Greek BM25 (accent-folded + Snowball-stemmed), mirroring the flat
+            # collection so hybrid search behaves identically on either target.
+            Property(name="text_normalized",
+                     description="Accent-folded chunk_text for diacritic-insensitive Greek BM25",
+                     data_type=DataType.TEXT, tokenization=Tokenization.WORD,
+                     index_searchable=True, index_filterable=False),
+            Property(name="text_stemmed", description="Snowball-stemmed chunk_text (Greek inflection recall)",
                      data_type=DataType.TEXT, tokenization=Tokenization.WORD,
                      index_searchable=True, index_filterable=False),
             Property(name="chunk_summary_stemmed", description="Snowball-stemmed chunk_summary",

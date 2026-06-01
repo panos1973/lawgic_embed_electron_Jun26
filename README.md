@@ -98,7 +98,13 @@ telemetry and full tracebacks. Openable from the app (Settings → Open logs fol
 - **HNSW:** `ef=200`, `ef_construction=256`, `max_connections=32`, RQ `rescore_limit=200`
   (over-fetch compressed, re-rank full-precision).
 - **Hybrid (BM25) side:** `b=0.3`, `k1=1.5` (tuned for long Greek legal text),
-  Greek stopword list, Snowball-stemmed `*_stemmed` companion fields.
+  Greek stopword list, plus two Greek-specific companion fields per chunk:
+  `text_normalized` (accent-folded — **precision**) and `text_stemmed` (Snowball-
+  stemmed — **recall** across inflection: νόμος/νόμου/νόμων → one term). Both are
+  written on ingest by the loader. **Query side (TS app):** fold the query for
+  `text_normalized` and run it through `greek_stem.stem_query` for `text_stemmed`
+  — the same transforms applied on ingest — and search both; never stemmed-only
+  (the stemmer is aggressive, so it boosts recall but loses precision alone).
 - **Tokenization per field:** `WORD` (searchable text), `TRIGRAM` (titles/summaries,
   fuzzy), `FIELD` (ids/urls, exact), `LOWERCASE` (`canonical_id` / `hierarchy_path`,
   keeps `Ν.5090/2024` a single token).
@@ -125,7 +131,8 @@ These are the fields the loader populates for every embedded provision today
 | `keywords` | text[] | 5–10 Greek keywords |
 | `chunk_summary` | text (TRIGRAM) | 2–3 sentence Greek summary |
 | `chunk_text` | text (WORD) | **Embedded text** — in-force provision text / markdown table |
-| `text_normalized` | text (WORD) | Accent-folded text for diacritic-insensitive Greek BM25 |
+| `text_normalized` | text (WORD) | Accent-folded text — diacritic-insensitive Greek BM25 (**precision**) |
+| `text_stemmed` | text (WORD) | Snowball-stemmed text — collapses Greek inflection (**recall**) |
 | `table_json` | text (FIELD) | Structured table for exact cell lookup |
 | `amends_provisions` | text[] | What this provision amends |
 | `amended_by_provisions` | text[] | What amends this provision |
