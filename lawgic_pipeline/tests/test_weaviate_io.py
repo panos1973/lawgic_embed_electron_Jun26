@@ -125,6 +125,19 @@ def test_load_amendments_denormalizes_target():
     assert rec["target_article_number"] == "24"
     assert rec["source_law_number"] == "5090/2024"
     assert rec["action"] == "replaces" and rec["resolved"] is True
+    # default extractor label round-trips (deterministic ops keep this default)
+    assert rec["extraction_method"] == "pattern_matching"
+
+
+def test_load_amendments_records_real_extraction_method():
+    # an op stamped by the LLM extractor must write its real method, not the
+    # previously-hardcoded "pattern_matching" constant.
+    c = _FakeClient()
+    ops = [AmendmentOp(op="adds", target_id="ν.4763/2020#αρ.5.παρ.2",
+                       scope="subcase", new_text="…", resolved=False,
+                       sub_edit_ordinal="0", extraction_method="llm:deepseek")]
+    wio.load_amendments(c, ops, source_law=_law())
+    assert c.sink["Jun2026Amendment"][0]["props"]["extraction_method"] == "llm:deepseek"
 
 
 def test_flat_and_article_write_bm25_fields():

@@ -133,6 +133,21 @@ def test_clean_pass_applies_to_llm_output():
     assert [op.target_id for op in law.amendments] == ["ν.4186/2013#αρ.9"]
 
 
+def test_extraction_method_records_llm_not_pattern_matching():
+    # the loader denormalizes op.extraction_method into Weaviate; an LLM edge must
+    # carry "llm:<provider>", not the AmendmentOp default "pattern_matching", so the
+    # embedded data tells the truth about which extractor produced the edge.
+    import config
+    law = _law("Το άρθρο 5 του ν. 4412/2016 αντικαθίσταται ως εξής: "
+               "«νέο κείμενο του άρθρου με πεζά γράμματα.»")
+    extract_amendments_llm(law, complete=_fake({"amendments": [{
+        "action": "replaces", "scope": "article", "target_law_number": "4412/2016",
+        "target_article_number": "5",
+        "new_text": "νέο κείμενο του άρθρου με πεζά γράμματα."}]}))
+    assert law.amendments[0].extraction_method == f"llm:{config.LLM_PROVIDER}"
+    assert law.amendments[0].extraction_method != "pattern_matching"
+
+
 def test_no_verb_provision_is_not_sent_to_llm():
     calls = []
     def spy(system, user, want_json=True, max_tokens=1500):

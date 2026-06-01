@@ -206,7 +206,7 @@ def load_amendments(client, ops: list[AmendmentOp], source_law: Law = None,
                 "target_article_number": _target_article(op.target_id),
                 "new_text": op.new_text or "",
                 "resolved": op.resolved,
-                "extraction_method": "pattern_matching",
+                "extraction_method": op.extraction_method,
             }
             if src_num:
                 props["source_law_number"] = src_num

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 from typing import Callable, Optional
 
+import config
 from models import (AmendmentOp, Law, make_provision_id, make_instrument_id,
                     TYPE_NOMOS, TYPE_PD)
 from pipeline.amend import _clean_amendments
@@ -117,6 +118,9 @@ def extract_amendments_llm(law: Law,
         import llm
         complete = llm.complete
 
+    # record the real extractor on every op so the loader stops labelling LLM
+    # edges as "pattern_matching" (the field is denormalized into Weaviate).
+    method = f"llm:{config.LLM_PROVIDER}"
     own_number = law.instrument_id.split(".")[-1]   # e.g. ν.5090/2024 -> 5090/2024
     seen: dict[str, int] = {}                       # target_id -> next ordinal
 
@@ -163,6 +167,7 @@ def extract_amendments_llm(law: Law,
                 effective_date=law.fek_date or None,
                 sub_edit_ordinal=str(ordinal),
                 resolved=bool(target_law is None),  # in-law targets resolve locally
+                extraction_method=method,
             ))
     # Same hygiene pass the deterministic extractor applies: drop heading-only /
     # empty edits, self-document dumps, unresolved fragments, and exact dupes, so

@@ -73,6 +73,7 @@ class AmendmentOp:
     new_text: Optional[str] = None
     sub_edit_ordinal: Optional[str] = None
     resolved: bool = True
+    extraction_method: str = "pattern_matching"   # "llm:<provider>" when set by amend_llm
 
 
 @dataclass
