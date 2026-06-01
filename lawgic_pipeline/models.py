@@ -121,6 +121,7 @@ class Provision:
     text_in_force: str = ""
     text_as_enacted: str = ""
     text_normalized: str = ""
+    text_stemmed: str = ""          # greek_stem.stem_text(body) — BM25 recall field
     table_json: Optional[str] = None
     keywords: list[str] = field(default_factory=list)
     chunk_summary: str = ""

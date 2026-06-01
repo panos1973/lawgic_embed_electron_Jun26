@@ -169,3 +169,32 @@ def test_no_self_consolidate_for_own_restated_article():
     self_consol = [op for op in law.amendments
                    if op.op == "consolidates" and op.target_id.startswith("ν.5082/2024#")]
     assert self_consol == []
+
+
+def test_clean_drops_self_dumps_and_fragments_keeps_real():
+    from pipeline.amend import _clean_amendments
+    from models import AmendmentOp
+    own = "ν.5082/2024"
+    ops = [
+        AmendmentOp(op="adds", target_id="ν.5082/2024", scope="document",
+                    new_text="Άρθρο 18 ..." * 6, resolved=False),          # self-dump
+        AmendmentOp(op="adds", target_id="ν.4763/2020", scope="document",
+                    new_text="Εφαρμογής", resolved=False),                  # fragment
+        AmendmentOp(op="adds", target_id="ν.4763/2020#αρ.40Α", scope="article",
+                    new_text="ΚΕΝΤΡΑ ...", resolved=True),                  # good (short, has art)
+        AmendmentOp(op="replaces", target_id="ν.4186/2013#αρ.9", scope="article",
+                    new_text="Άρθρο 9 ..." * 3, resolved=True),            # good
+    ]
+    out = _clean_amendments(ops, own)
+    tids = [o.target_id for o in out]
+    assert tids == ["ν.4763/2020#αρ.40Α", "ν.4186/2013#αρ.9"]
+
+
+def test_clean_dedups_exact_duplicates():
+    from pipeline.amend import _clean_amendments
+    from models import AmendmentOp
+    op = AmendmentOp(op="replaces", target_id="ν.4186/2013#αρ.9", scope="article",
+                     new_text="Άρθρο 9 ..." * 3, resolved=True)
+    op2 = AmendmentOp(op="replaces", target_id="ν.4186/2013#αρ.9", scope="article",
+                      new_text="Άρθρο 9 ..." * 3, resolved=True)
+    assert len(_clean_amendments([op, op2], "ν.5082/2024")) == 1

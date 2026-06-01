@@ -180,3 +180,17 @@ def test_unclosed_guillemet_masks_to_end():
     txt = "Άρθρο 1\nΕισαγωγή.\nπροστίθεται ως εξής:\n«Άρθρο 5\nΞένο.\nΆρθρο 6\nΚι άλλο."
     law = segment(txt, law)
     assert [p.article_no for p in law.provisions] == ["1"]   # 5,6 stay masked
+
+
+def test_markdown_article_heading_anchor_no_bleed():
+    """Azure DI emits '# Άρθρο 42 Τίτλος...' on one line; it must start a new
+    article so the previous one does not swallow it (art.41/42 bleed)."""
+    law = Law(instrument_id="ν.5082/2024", instrument_key="N",
+              instrument_type=TYPE_NOMOS)
+    txt = ("Άρθρο 41\nΠαράταση.\nΚείμενο 41.\n"
+           "# Άρθρο 42 Οργανικές - Τροποποίηση άρθρου 77 ν. 4662/2020\n"
+           "Κείμενο 42.\nΆρθρο 43\nΕπόμενο.")
+    law = segment(txt, law)
+    assert [p.article_no for p in law.provisions] == ["41", "42", "43"]
+    a41 = next(p for p in law.provisions if p.article_no == "41")
+    assert "Άρθρο 42" not in a41.text_in_force

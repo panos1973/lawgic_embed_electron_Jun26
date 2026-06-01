@@ -18,6 +18,7 @@ import re
 
 from models import Law, Provision, make_provision_id
 from normalize import fold_for_bm25
+from greek_stem import stem_text
 
 # Structural + leaf anchors. All require the keyword at the start of a line
 # (headers in FEK sit on their own line, usually upper-case). The label group is
@@ -29,6 +30,11 @@ _ANCHORS = [
     ("chapter", re.compile(r"(?m)^\s*ΚΕΦΑΛΑΙΟ\s+" + _LABEL + r"\s*$")),
     ("section", re.compile(r"(?m)^\s*ΤΜΗΜΑ\s+" + _LABEL + r"\s*$")),
     ("article", re.compile(r"(?m)^\s*Άρθρο\s+(\d+[Α-Ωα-ω]?)\.?\s*$")),
+    # markdown-heading article (Azure DI path): "# Άρθρο 42 Τίτλος..." — heading
+    # and title share the line. Unambiguous (a bare 'Άρθρο 42' cross-reference in
+    # body text never starts with '#'), so this safely bounds the next article
+    # and stops the previous one from swallowing it (the art.41/42 bleed).
+    ("article", re.compile(r"(?m)^\s*#{1,6}\s*Άρθρο\s+(\d+[Α-Ωα-ω]?)\b.*$")),
     # spelled-out ordinals (κύρωση/ΠΝΠ/short laws): "Άρθρο πρώτο", "Άρθρο μόνο"
     ("article", re.compile(
         r"(?im)^\s*Άρθρο\s+(πρώτο|δεύτερο|τρίτο|τέταρτο|πέμπτο|έκτο|έβδομο|όγδοο|"
@@ -144,6 +150,7 @@ def segment(text: str, law: Law) -> Law:
                 book=state["book"], part=state["part"], chapter=state["chapter"],
                 hierarchy_path=path, text_in_force=body,
                 text_normalized=fold_for_bm25(body),
+                text_stemmed=stem_text(body),
                 content_hash=hashlib.sha256(body.encode()).hexdigest()))
             continue
 
@@ -171,6 +178,7 @@ def segment(text: str, law: Law) -> Law:
             book=state["book"], part=state["part"], chapter=state["chapter"],
             hierarchy_path=path, text_in_force=body,
             text_normalized=fold_for_bm25(body),
+            text_stemmed=stem_text(body),
             content_hash=hashlib.sha256(body.encode()).hexdigest()))
 
     # Fallback: instruments with no internal Άρθρο/ΠΑΡΑΡΤΗΜΑ structure (most FEK
@@ -189,5 +197,6 @@ def segment(text: str, law: Law) -> Law:
                 level="document", chunk_type="document",
                 hierarchy_path=law.instrument_id,
                 text_in_force=body, text_normalized=fold_for_bm25(body),
+                text_stemmed=stem_text(body),
                 content_hash=hashlib.sha256(body.encode()).hexdigest()))
     return law

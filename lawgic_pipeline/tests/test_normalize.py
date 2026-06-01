@@ -75,6 +75,15 @@ def test_strip_header_fragments_from_dewrapped_columns():
     assert "Προστίθεται παράγραφος" in out and "Άρθρο 4 Σκοπός" in out and "Τέλος" in out
 
 
+
+def test_strip_azure_page_comments():
+    body = ("3. Η ισχύς αρχίζει.\n<!-- PageNumber=\"90\" -->\n"
+            "<!-- PageHeader=\"ΕΦΗΜΕΡΙΔΑ ΤΗΣ ΚΥΒΕΡΝΗΣΕΩΣ\" -->\nΆρθρο 42 Επόμενο.")
+    out = strip_furniture(body)
+    assert "<!--" not in out and "PageNumber" not in out
+    assert "Η ισχύς αρχίζει." in out and "Άρθρο 42 Επόμενο." in out
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     p = 0
