@@ -39,9 +39,32 @@ def test_replaces_with_new_text_and_nested_scope():
     assert len(law.amendments) == 1
     op = law.amendments[0]
     assert op.op == "replaces" and op.scope == "case"
-    assert op.target_id == "ν.4172/2013#αρ.60.παρ.1"
+    # the case (.περ.α) must be preserved in the canonical id, not dropped
+    assert op.target_id == "ν.4172/2013#αρ.60.παρ.1.περ.α"
     assert op.new_text.startswith("Ειδικά")
     assert op.resolved is False          # cross-law target, not resolved locally
+
+
+def test_pd_target_keeps_pd_instrument_type():
+    # a π.δ. target must become 'π.δ.NUM/YEAR', not 'ν.NUM/YEAR' (the 10a6adc8 bug).
+    law = _law("Η παρ. 2 του άρθρου 14 του π.δ. 77/2023 αντικαθίσταται ως εξής: "
+               "«νέο κείμενο της παραγράφου με πεζά.»")
+    extract_amendments_llm(law, complete=_fake({"amendments": [{
+        "action": "consolidates", "scope": "paragraph", "target_law_number": "77/2023",
+        "target_law_type": "pd", "target_article_number": "14", "target_paragraph": "2",
+        "new_text": "νέο κείμενο της παραγράφου με πεζά."}]}))
+    assert law.amendments[0].target_id == "π.δ.77/2023#αρ.14.παρ.2"
+
+
+def test_law_target_defaults_to_nomos_when_type_absent():
+    # backward-compatible: no target_law_type -> ν. (the common case)
+    law = _law("Το άρθρο 5 του ν. 4412/2016 αντικαθίσταται ως εξής: "
+               "«νέο κείμενο του άρθρου με πεζά γράμματα.»")
+    extract_amendments_llm(law, complete=_fake({"amendments": [{
+        "action": "replaces", "scope": "article", "target_law_number": "4412/2016",
+        "target_article_number": "5",
+        "new_text": "νέο κείμενο του άρθρου με πεζά γράμματα."}]}))
+    assert law.amendments[0].target_id == "ν.4412/2016#αρ.5"
 
 
 def test_multi_target_split_into_two_ops():
@@ -108,6 +131,21 @@ def test_clean_pass_applies_to_llm_output():
          "new_text": "Άρθρο 9 Πρόγραμμα σπουδών. 1. Τα προγράμματα διδασκαλίας."},  # keep
     ]}))
     assert [op.target_id for op in law.amendments] == ["ν.4186/2013#αρ.9"]
+
+
+def test_extraction_method_records_llm_not_pattern_matching():
+    # the loader denormalizes op.extraction_method into Weaviate; an LLM edge must
+    # carry "llm:<provider>", not the AmendmentOp default "pattern_matching", so the
+    # embedded data tells the truth about which extractor produced the edge.
+    import config
+    law = _law("Το άρθρο 5 του ν. 4412/2016 αντικαθίσταται ως εξής: "
+               "«νέο κείμενο του άρθρου με πεζά γράμματα.»")
+    extract_amendments_llm(law, complete=_fake({"amendments": [{
+        "action": "replaces", "scope": "article", "target_law_number": "4412/2016",
+        "target_article_number": "5",
+        "new_text": "νέο κείμενο του άρθρου με πεζά γράμματα."}]}))
+    assert law.amendments[0].extraction_method == f"llm:{config.LLM_PROVIDER}"
+    assert law.amendments[0].extraction_method != "pattern_matching"
 
 
 def test_no_verb_provision_is_not_sent_to_llm():

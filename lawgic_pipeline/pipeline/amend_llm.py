@@ -25,7 +25,9 @@ from __future__ import annotations
 import json
 from typing import Callable, Optional
 
-from models import AmendmentOp, Law, make_provision_id
+import config
+from models import (AmendmentOp, Law, make_provision_id, make_instrument_id,
+                    TYPE_NOMOS, TYPE_PD)
 from pipeline.amend import _clean_amendments
 import logsetup
 
@@ -52,6 +54,8 @@ _SYSTEM = (
     '"action":"replaces|adds|repeals|amends|modifies|renumbers|consolidates",'
     '"scope":"article|paragraph|case|subcase|phrase",'
     '"target_law_number":"4172/2013 or null if it amends the SAME law being enacted",'
+    '"target_law_type":"law|pd  — pd if the cited instrument is a π.δ./προεδρικό '
+    'διάταγμα, else law",'
     '"target_article_number":"e.g. 60",'
     '"target_paragraph":"e.g. 1 or null",'
     '"target_case":"e.g. α or null",'
@@ -74,13 +78,35 @@ def _norm_scope(s: str) -> str:
     return s if s in _SCOPES else "article"
 
 
-def _target_id(target_law: Optional[str], own_id: str, article: str,
-               paragraph: Optional[str]) -> str:
-    """Build the target canonical id. target_law=None -> in-law (this law)."""
+def _instrument_id(target_law: Optional[str], law_type: Optional[str],
+                   own_id: str) -> str:
+    """Build the target instrument id, honouring π.δ. vs ν. (default ν.).
+
+    target_law=None -> in-law (the enacting law). Otherwise parse 'NUM/YEAR' and
+    use make_instrument_id so a π.δ. target becomes 'π.δ.NUM/YEAR' not 'ν.NUM/YEAR'
+    (the deterministic extractor's format — keeps canonical_ids consistent across
+    both extractors).
+    """
+    if not target_law:
+        return own_id
+    num, _, year = target_law.partition("/")
+    if not (num.isdigit() and year.isdigit()):
+        return f"ν.{target_law}"                     # defensive: keep raw form
+    itype = TYPE_PD if (law_type or "").strip().lower() in ("pd", "π.δ.", "πδ") \
+        else TYPE_NOMOS
+    return make_instrument_id(itype, int(num), int(year))
+
+
+def _target_id(target_law: Optional[str], law_type: Optional[str], own_id: str,
+               article: str, paragraph: Optional[str], case: Optional[str]) -> str:
+    """Build the target canonical id, incl. π.δ. type and the case (.περ.) suffix."""
     if not article:
         return ""
-    instrument = own_id if not target_law else f"ν.{target_law}"
-    return make_provision_id(instrument, article, paragraph or None)
+    tid = make_provision_id(_instrument_id(target_law, law_type, own_id),
+                            article, paragraph or None)
+    if case:
+        tid += f".περ.{case}"                        # matches amend.py format
+    return tid
 
 
 def extract_amendments_llm(law: Law,
@@ -92,6 +118,9 @@ def extract_amendments_llm(law: Law,
         import llm
         complete = llm.complete
 
+    # record the real extractor on every op so the loader stops labelling LLM
+    # edges as "pattern_matching" (the field is denormalized into Weaviate).
+    method = f"llm:{config.LLM_PROVIDER}"
     own_number = law.instrument_id.split(".")[-1]   # e.g. ν.5090/2024 -> 5090/2024
     seen: dict[str, int] = {}                       # target_id -> next ordinal
 
@@ -123,7 +152,10 @@ def extract_amendments_llm(law: Law,
                 target_law = None                   # treat as in-law, not a self-loop
 
             paragraph = (a.get("target_paragraph") or "").strip() or None
-            tid = _target_id(target_law, law.instrument_id, article, paragraph)
+            case = (a.get("target_case") or "").strip() or None
+            law_type = a.get("target_law_type")
+            tid = _target_id(target_law, law_type, law.instrument_id,
+                             article, paragraph, case)
             ordinal = seen.get(tid, 0)
             seen[tid] = ordinal + 1
 
@@ -135,6 +167,7 @@ def extract_amendments_llm(law: Law,
                 effective_date=law.fek_date or None,
                 sub_edit_ordinal=str(ordinal),
                 resolved=bool(target_law is None),  # in-law targets resolve locally
+                extraction_method=method,
             ))
     # Same hygiene pass the deterministic extractor applies: drop heading-only /
     # empty edits, self-document dumps, unresolved fragments, and exact dupes, so
