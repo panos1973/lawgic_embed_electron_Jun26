@@ -72,6 +72,27 @@ def test_no_signal_leaves_empty():
     assert _dkn("", "Γενική διάταξη χωρίς σαφές αντικείμενο 123.") == []
 
 
+def test_ministry_portfolio_names_do_not_leak_volumes():
+    # ν.5082/2024 art.28 lists ministries by portfolio; those areas (shipping,
+    # agriculture) are NOT the article's subject and must not become volumes.
+    doms = _dkn("", "εκπρόσωπος του Υπουργείου Ναυτιλίας και Νησιωτικής Πολιτικής, "
+                    "ο οποίος ορίζεται από τον Υπουργό Αγροτικής Ανάπτυξης και Τροφίμων")
+    assert "ΕΜΠΟΡΙΚΗ ΝΑΥΤΙΛΙΑ" not in doms
+    assert "ΓΕΩΡΓΙΚΗ ΝΟΜΟΘΕΣΙΑ" not in doms
+
+
+def test_skills_cultivation_is_not_agriculture():
+    # "καλλιέργεια δεξιοτήτων" = cultivating skills, not farming.
+    assert "ΓΕΩΡΓΙΚΗ ΝΟΜΟΘΕΣΙΑ" not in _dkn(
+        "", "η καλλιέργεια ανάλογων δεξιοτήτων ώστε να διευκολύνεται η ένταξη")
+
+
+def test_real_agriculture_still_detected_after_portfolio_strip():
+    # the mask must not eat genuine farming subjects in ordinary prose
+    assert "ΓΕΩΡΓΙΚΗ ΝΟΜΟΘΕΣΙΑ" in _dkn(
+        "", "Ρυθμίσεις για τις γεωργικές εκμεταλλεύσεις και τα αγροτικά προϊόντα.")
+
+
 def test_no_duplicate_volumes():
     # criminal + criminal keywords both present -> volume appears once
     doms = _dkn("Ποινικός Κώδικας", "Η ποινή και το έγκλημα κατά τον Ποινικό Κώδικα.")

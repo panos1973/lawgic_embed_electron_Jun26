@@ -69,6 +69,25 @@ def test_nomos_inline():
     assert r["warnings"] == []
 
 
+# Real ν.5082/2024 shape: dewrapped so title + promulgation + TOC share lines,
+# and the president is female ("Η ΠΡΟΕΔΡΟΣ").
+NOMOS_INLINE_PROMULGATION = """ΕΦΗΜΕΡΙΔΑ ΤΗΣ ΚΥΒΕΡΝΗΣΕΩΣ
+19 Ιανουαρίου 2024   ΤΕΥΧΟΣ ΠΡΩΤΟ   Αρ. Φύλλου 9
+ΝΟΜΟΣ ΥΠ' ΑΡΙΘΜ. 5082
+Ενίσχυση του Εθνικού Συστήματος Επαγγελματικής Εκπαίδευσης και Κατάρτισης και άλλες επείγουσες διατάξεις Η ΠΡΟΕΔΡΟΣ ΤΗΣ ΕΛΛΗΝΙΚΗΣ ΔΗΜΟΚΡΑΤΙΑΣ Εκδίδομε τον ακόλουθο νόμο που ψήφισε η Βουλή: ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ ΜΕΡΟΣ Α': ΓΕΝΙΚΕΣ ΔΙΑΤΑΞΕΙΣ
+"""
+
+
+def test_title_stops_at_inline_promulgation_and_toc():
+    r = parse_masthead(NOMOS_INLINE_PROMULGATION)
+    assert r["number"] == 5082
+    assert r["title"] == ("Ενίσχυση του Εθνικού Συστήματος Επαγγελματικής "
+                          "Εκπαίδευσης και Κατάρτισης και άλλες επείγουσες διατάξεις")
+    assert "ΠΡΟΕΔΡΟΣ" not in r["title"]            # promulgation excluded
+    assert "ΠΙΝΑΚΑΣ" not in r["title"]             # TOC excluded
+    assert "Εκδίδομε" not in r["title"]
+
+
 def test_additional_instrument_types():
     from models import (TYPE_AN, TYPE_ND, TYPE_KANAP, TYPE_APOF_DIOIK,
                         TYPE_KANVOULIS)

@@ -181,13 +181,50 @@ def test_clean_drops_self_dumps_and_fragments_keeps_real():
         AmendmentOp(op="adds", target_id="ν.4763/2020", scope="document",
                     new_text="Εφαρμογής", resolved=False),                  # fragment
         AmendmentOp(op="adds", target_id="ν.4763/2020#αρ.40Α", scope="article",
-                    new_text="ΚΕΝΤΡΑ ...", resolved=True),                  # good (short, has art)
+                    new_text="3α. Με κοινή απόφαση ορίζεται.", resolved=True),  # good (short, lower-case body)
         AmendmentOp(op="replaces", target_id="ν.4186/2013#αρ.9", scope="article",
                     new_text="Άρθρο 9 ..." * 3, resolved=True),            # good
     ]
     out = _clean_amendments(ops, own)
     tids = [o.target_id for o in out]
     assert tids == ["ν.4763/2020#αρ.40Α", "ν.4186/2013#αρ.9"]
+
+
+def test_clean_drops_heading_only_and_empty_new_text():
+    """Real v1.1.0 noise: text-bearing edits whose quoted span is a bare heading
+    or empty must be dropped, even when they carry a precise #αρ. target."""
+    from pipeline.amend import _clean_amendments
+    from models import AmendmentOp
+    own = "ν.5082/2024"
+    ops = [
+        AmendmentOp(op="adds", target_id="ν.4763/2020#αρ.40Ι", scope="article",
+                    new_text="Κεφάλαιο ΣΤ2", resolved=True),               # heading insert
+        AmendmentOp(op="adds", target_id="ν.4763/2020#αρ.40Α", scope="article",
+                    new_text="ΚΕΝΤΡΑ ΕΠΑΓΓΕΛΜΑΤΙΚΗΣ ΕΚΠΑΙΔΕΥΣΗΣ ΚΑΙ ΚΑΤΑΡΤΙΣΗΣ",
+                    resolved=True),                                         # all-caps banner
+        AmendmentOp(op="adds", target_id="ν.4763/2020#αρ.40Ι.παρ.3", scope="paragraph",
+                    new_text="", resolved=True),                            # empty
+        AmendmentOp(op="replaces", target_id="ν.4186/2013#αρ.9", scope="article",
+                    new_text="Άρθρο 9 Πρόγραμμα σπουδών. 1. Τα προγράμματα.",
+                    resolved=True),                                         # real (lower-case body)
+    ]
+    out = _clean_amendments(ops, own)
+    assert [o.target_id for o in out] == ["ν.4186/2013#αρ.9"]
+
+
+def test_clean_keeps_textless_repeal_and_renumber():
+    """repeals/renumbers carry no quoted text by nature — never treat their
+    empty new_text as heading-only noise."""
+    from pipeline.amend import _clean_amendments
+    from models import AmendmentOp
+    ops = [
+        AmendmentOp(op="repeals", target_id="ν.1234/2000", scope="document",
+                    new_text=None, resolved=True),
+        AmendmentOp(op="renumbers", target_id="ν.4763/2020#αρ.40", scope="article",
+                    new_text=None, resolved=True),
+    ]
+    out = _clean_amendments(ops, "ν.5082/2024")
+    assert [o.op for o in out] == ["repeals", "renumbers"]
 
 
 def test_clean_dedups_exact_duplicates():
