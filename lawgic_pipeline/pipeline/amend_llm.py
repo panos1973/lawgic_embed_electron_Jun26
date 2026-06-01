@@ -26,6 +26,7 @@ import json
 from typing import Callable, Optional
 
 from models import AmendmentOp, Law, make_provision_id
+from pipeline.amend import _clean_amendments
 import logsetup
 
 log = logsetup.get("amend_llm")
@@ -135,5 +136,9 @@ def extract_amendments_llm(law: Law,
                 sub_edit_ordinal=str(ordinal),
                 resolved=bool(target_law is None),  # in-law targets resolve locally
             ))
+    # Same hygiene pass the deterministic extractor applies: drop heading-only /
+    # empty edits, self-document dumps, unresolved fragments, and exact dupes, so
+    # both extractors emit the clean edge set consolidate()/the loader expect.
+    law.amendments = _clean_amendments(law.amendments, law.instrument_id)
     log.info("amend_llm %s: %d op(s)", law.instrument_id, len(law.amendments))
     return law

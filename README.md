@@ -159,6 +159,40 @@ enrichment, embedding telemetry + rotating log.
 2. `pipeline/amend.py` — amendment target resolution + cross-law consolidation.
 3. Trained ΔΚΝ model (GLC/Raptarchis47k) to augment the deterministic volumes.
 
+## Amendment extraction — validate before flipping the LLM extractor
+Amendments are the highest-value, hardest edges. Two extractors exist behind one
+switch (`AMEND_EXTRACTOR`, default `deterministic`):
+
+- **`deterministic`** (`pipeline/amend.py`) — regex target resolution. Fast, no
+  key, but mis-aligns *which* `«…»` span belongs to *which* target in articles
+  with multiple nested references.
+- **`llm`** (`pipeline/amend_llm.py`) — provider-agnostic (DeepSeek V4 Pro by
+  default), grounded in real Greek amendment morphology, captures `new_text`, and
+  guards source==target self-loops. Falls back to deterministic (with a log line)
+  if no key is set.
+
+Both extractors run the **same `_clean_amendments` hygiene** (drops heading-only/
+empty edits, self-document dumps, unresolved fragments, exact dupes), so the edge
+set is consistent whichever is active.
+
+**Validate, then flip.** Do not enable `llm` for a full re-embed until it beats
+the deterministic baseline on the gold set:
+
+    # 1. drop the source-law texts named '<law>.txt'/'<law>.pdf' into ./goldlaws
+    # 2. baseline (no key):
+    python lawgic_pipeline/benchmark_amendments.py \
+      --gold lawgic_pipeline/gold_amendments.sample.json --laws-dir ./goldlaws \
+      --extractor deterministic
+    # 3. LLM extractor (set provider + key; DeepSeek V4 Pro non-thinking):
+    AMEND_EXTRACTOR=llm LLM_PROVIDER=deepseek DEEPSEEK_API_KEY=… \
+      python lawgic_pipeline/benchmark_amendments.py \
+        --gold lawgic_pipeline/gold_amendments.sample.json --laws-dir ./goldlaws \
+        --extractor llm
+
+The harness reports precision / recall / F1 and `new_text` coverage. Flip
+`AMEND_EXTRACTOR=llm` for ingestion only once the LLM run wins on F1 *and*
+coverage.
+
 ## Security
 Never commit API keys. `create_all_collections.py` reads the Weaviate key from an
 env var; rotate any previously-exposed key. Desktop secrets are encrypted at rest

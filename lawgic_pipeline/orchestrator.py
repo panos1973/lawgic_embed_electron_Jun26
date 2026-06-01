@@ -77,8 +77,13 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
         try:
             import pipeline.amend_llm as amend_llm
             law = amend_llm.extract_amendments_llm(law)
-        except SystemExit:
-            law = amend.extract_amendments(law)        # no LLM key -> deterministic
+        except SystemExit as e:
+            # no LLM key (or provider misconfig) -> deterministic, but say so:
+            # otherwise the operator thinks the LLM extractor ran when it didn't.
+            log.warning("AMEND_EXTRACTOR=llm but LLM unavailable (%s); "
+                        "falling back to deterministic extractor for %s",
+                        e, law.instrument_id)
+            law = amend.extract_amendments(law)
     else:
         law = amend.extract_amendments(law)
     law = amend.consolidate(law)
