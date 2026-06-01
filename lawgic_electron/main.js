@@ -25,6 +25,7 @@ function defaults() {
     weaviateApiKey: '', voyageApiKey: '', diEndpoint: '', diKey: '',
     anthropicKey: '', deepseekKey: '', geminiKey: '', jurisdiction: 'gr',
     llmProvider: 'anthropic', llmModel: 'claude-haiku-4-5', llmThinking: false,
+    amendExtractor: 'deterministic',
     stateDb: path.join(app.getPath('userData'), 'lawgic_state.db'),
   };
 }
@@ -64,6 +65,7 @@ function childEnv(s) {
     DEEPSEEK_API_KEY: s.deepseekKey, GEMINI_API_KEY: s.geminiKey,
     LLM_PROVIDER: s.llmProvider, LLM_MODEL: s.llmModel,
     LLM_THINKING: s.llmThinking ? 'on' : 'off',
+    AMEND_EXTRACTOR: s.amendExtractor || 'deterministic',
     STATE_DB: s.stateDb, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8',
     APP_VERSION: app.getVersion(),
   });

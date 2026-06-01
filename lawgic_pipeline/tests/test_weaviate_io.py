@@ -127,6 +127,87 @@ def test_load_amendments_denormalizes_target():
     assert rec["action"] == "replaces" and rec["resolved"] is True
 
 
+def test_flat_and_article_write_bm25_fields():
+    """The Greek BM25 recall fields must be populated on BOTH search collections,
+    under the exact names the schema declares (text_normalized / text_stemmed +
+    the stemmed summary/title)."""
+    from pipeline import segment
+    from models import Law
+    law = Law(instrument_id="ν.5090/2024", instrument_key="N5090/2024",
+              instrument_type=TYPE_NOMOS, title="Δοκιμή", fek_date="2024-03-26")
+    segment.segment("Άρθρο 1\nΟι διατάξεις των νόμων τροποποιούνται.\n", law)
+    law.provisions[0].chunk_summary = "Σύνοψη των τροποποιήσεων."
+    c = _FakeClient()
+    wio.load_law(c, law, [[0.0] * 4])
+
+    flat = c.sink["Jun2026GRLegaDocs"][0]["props"]
+    art = c.sink["Jun2026LawArticle"][0]["props"]
+    for props in (flat, art):
+        assert props["text_normalized"] and props["text_stemmed"]
+        # stemmed differs from folded (inflection collapsed): νόμων->νομ etc.
+        assert props["text_stemmed"] != props["text_normalized"]
+        assert props["chunk_summary_stemmed"]                 # summary stemmed
+    assert flat["article_title_stemmed"]                      # title stemmed
+
+
+def test_loader_props_are_declared_in_schema():
+    """Guard against the chunk_text_stemmed/text_stemmed class of bug: every
+    property the loaders write must be a property the schema declares, else the
+    data lands on an auto-schema field and the configured BM25 index stays empty.
+    Parses create_all_collections.py statically (no Weaviate needed)."""
+    import ast
+    import config
+    from pipeline import segment
+    from models import Law
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    src = open(os.path.join(root, "create_all_collections.py"), encoding="utf-8").read()
+    tree = ast.parse(src)
+
+    # Collections are built via delete_and_create(client, <NAME_CONST>, properties=[...]).
+    # Resolve the collection-name module constants (FLAT_COLLECTION = "Jun2026...")
+    # then collect each call's declared Property(name=...).
+    name_consts = {n.targets[0].id: n.value.value
+                   for n in tree.body
+                   if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+                   and isinstance(n.targets[0], ast.Name)}
+
+    declared: dict[str, set] = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and getattr(node.func, "id", "") == "delete_and_create"):
+            continue
+        # 2nd positional arg is the collection-name constant (a Name)
+        name = None
+        if len(node.args) >= 2 and isinstance(node.args[1], ast.Name):
+            name = name_consts.get(node.args[1].id)
+        props = set()
+        for kw in node.keywords:
+            if kw.arg != "properties":
+                continue
+            for elt in kw.value.elts:                         # Property(...) calls
+                for pkw in getattr(elt, "keywords", []):
+                    if pkw.arg == "name" and isinstance(pkw.value, ast.Constant):
+                        props.add(pkw.value.value)
+        if name:
+            declared[name] = props
+
+    # build a representative law and capture what each loader actually writes
+    law = Law(instrument_id="ν.5090/2024", instrument_key="N5090/2024",
+              instrument_type=TYPE_NOMOS, title="Δοκιμή", fek_date="2024-03-26")
+    segment.segment("Άρθρο 1\nΟι διατάξεις τροποποιούνται.\n", law)
+    c = _FakeClient()
+    wio.load_law(c, law, [[0.0] * 4])
+    wio.load_document(c, law)
+
+    pairs = [(config.FLAT_COLLECTION, c.sink["Jun2026GRLegaDocs"][0]["props"]),
+             (config.GRAPH_ARTICLE, c.sink["Jun2026LawArticle"][0]["props"]),
+             (config.GRAPH_DOCUMENT, c.sink["Jun2026LawDocument"][0]["props"])]
+    for coll, written in pairs:
+        undeclared = set(written) - declared.get(coll, set())
+        assert not undeclared, f"{coll}: loader writes undeclared props {undeclared}"
+
+
 # --- cross-law consolidation: self-contained fake store -------------------------
 from weaviate.util import generate_uuid5  # noqa: E402
 

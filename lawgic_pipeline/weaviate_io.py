@@ -10,6 +10,12 @@ from weaviate.util import generate_uuid5
 from weaviate.classes.tenants import Tenant
 import config
 from models import Law, Provision, AmendmentOp
+from greek_stem import stem_text
+
+
+def _stem(s: str) -> str:
+    """Snowball-stem a short field (summary/title); empty-safe."""
+    return stem_text(s) if s else ""
 
 
 def connect() -> weaviate.WeaviateClient:
@@ -89,6 +95,8 @@ def _flat_props(p: Provision) -> dict:
         "hierarchy_path": p.hierarchy_path, "article_title": p.article_title,
         "chunk_summary": p.chunk_summary, "chunk_text": p.text_in_force,
         "text_normalized": p.text_normalized, "text_stemmed": p.text_stemmed,
+        "chunk_summary_stemmed": _stem(p.chunk_summary),
+        "article_title_stemmed": _stem(p.article_title),
         "table_json": p.table_json,
         "keywords": p.keywords, "amends_provisions": p.amends,
         "amended_by_provisions": p.amended_by, "external_law_references": p.cites,
@@ -156,7 +164,11 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
                 "document_law_number": p.instrument_id.split(".")[-1],
                 "article_number": p.article_no, "article_title": p.article_title,
                 "chunk_text": p.text_in_force, "table_json": p.table_json,
-                "chunk_summary": p.chunk_summary, "version": p.version,
+                "text_normalized": p.text_normalized, "text_stemmed": p.text_stemmed,
+                "chunk_summary": p.chunk_summary,
+                "chunk_summary_stemmed": _stem(p.chunk_summary),
+                "article_title_stemmed": _stem(p.article_title),
+                "version": p.version,
                 "valid_from": p.valid_from, "valid_to": p.valid_to,
                 "is_current": p.is_current, "content_hash": p.content_hash,
                 "hierarchy_path": p.hierarchy_path, "legal_domain": p.legal_domain,

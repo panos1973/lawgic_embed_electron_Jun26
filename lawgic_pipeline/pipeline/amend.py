@@ -181,13 +181,46 @@ def _has_article(target_id: str) -> bool:
     return "#αρ." in (target_id or "")
 
 
+# Ops that are meaningless without replacement text: an "adds"/"replaces"/
+# "consolidates"/"modifies" whose new_text is empty or a bare structural heading
+# carries no normative content for a reader. "repeals"/"renumbers" are textless
+# by nature, so they are NOT subject to this check.
+_TEXT_OPS = {"adds", "replaces", "consolidates", "modifies"}
+
+# A structural heading line the quoter sometimes grabs instead of article body
+# ("Κεφάλαιο ΣΤ2", "ΤΜΗΜΑ Β'").
+_STRUCT_HEAD = re.compile(r"^\s*(ΚΕΦΑΛΑΙΟ|Κεφάλαιο|ΤΜΗΜΑ|Τμήμα|ΜΕΡΟΣ|Μέρος)\b")
+
+
+def _is_heading_only(nt: str) -> bool:
+    """True when new_text is empty or just a heading/banner, not article body.
+
+    Two real v1.1.0 noise shapes, kept tight so genuine (short) normative edits
+    survive — Greek normative text is overwhelmingly lower-case, so the presence
+    of a lower-case letter is a strong "this is real body" signal:
+      • an all-caps section banner with no lower-case letters ("ΚΕΝΤΡΑ
+        ΕΠΑΓΓΕΛΜΑΤΙΚΗΣ ΕΚΠΑΙΔΕΥΣΗΣ ΚΑΙ ΚΑΤΑΡΤΙΣΗΣ"), capped in length;
+      • a short ΚΕΦΑΛΑΙΟ/ΤΜΗΜΑ/ΜΕΡΟΣ heading insert ("Κεφάλαιο ΣΤ2").
+    """
+    nt = (nt or "").strip()
+    if not nt:
+        return True
+    if not any(c.islower() for c in nt) and len(nt) <= 80:
+        return True
+    if _STRUCT_HEAD.match(nt) and len(nt) <= 40:
+        return True
+    return False
+
+
 def _clean_amendments(ops: list, own: str) -> list:
     """Drop noise edges and de-duplicate, preserving order.
 
-    Removes three junk patterns seen in real v1.1.0 output, while keeping every
+    Removes the junk patterns seen in real v1.1.0 output, while keeping every
     edge that carries a precise #αρ. target OR a resolved external instrument
     (e.g. a whole-document repeal "Ο ν. 1234/2000 καταργείται." — no article, no
     quoted text, but a real target):
+      0. heading-only edits — a text-bearing op whose new_text is empty or just a
+         structural heading/banner (the "Κεφάλαιο ΣΤ2" / all-caps-title captures);
       1. self-document dumps — no article locator, target == the enacting law,
          whole-article new_text (the law's own restated text mis-read as an edit);
       2. fragments — UNRESOLVED (no external instrument named), no precise article
@@ -198,6 +231,9 @@ def _clean_amendments(ops: list, own: str) -> list:
     for op in ops:
         tid = op.target_id or ""
         nt = (op.new_text or "").strip()
+        # 0. text-bearing op with no real replacement body (heading/banner/empty)
+        if op.op in _TEXT_OPS and _is_heading_only(nt):
+            continue
         if not _has_article(tid):
             # 1. self-referential document dump targeting the enacting law
             if tid == own or tid.startswith(own + "#"):

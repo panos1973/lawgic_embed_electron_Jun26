@@ -126,13 +126,24 @@ def _parse_date(text: str) -> Optional[str]:
     return None
 
 
+# Promulgation / TOC boundary that follows the title. On dewrapped FEK text the
+# title and this boundary share a line, so it must match INLINE (no ^ anchor):
+#   "... και άλλες επείγουσες διατάξεις Η ΠΡΟΕΔΡΟΣ ΤΗΣ ΕΛΛΗΝΙΚΗΣ ΔΗΜΟΚΡΑΤΙΑΣ
+#    Εκδίδομε τον ακόλουθο νόμο ... ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ ΜΕΡΟΣ Α' ..."
+# Ο/Η ΠΡΟΕΔΡΟΣ (the president is currently female -> "Η"), the promulgation verb
+# Εκδίδομε/Εκδίδουμε, and ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ never appear inside a real title.
+_TITLE_STOP = re.compile(
+    r"(?:[ΟΗ]\s+ΠΡΟΕΔΡΟΣ\s+ΤΗΣ\s+ΕΛΛΗΝΙΚΗΣ|Εκδίδ[οσ]\w*\s+τον\b|"
+    r"ΠΙΝΑΚΑΣ\s+ΠΕΡΙΕΧΟΜΕΝΩΝ|\bΆρθρο\s+\d|\bΑΡΘΡΟ\s+\d|\n\s*\n)")
+
+
 def _parse_title(text: str, header_end: int) -> str:
-    """Title = the text block right after the instrument header line, up to a
-    blank line or the start of the promulgation ('Ο ΠΡΟΕΔΡΟΣ ...') / first article.
+    """Title = the text block right after the instrument header line, up to the
+    promulgation formula ('Ο/Η ΠΡΟΕΔΡΟΣ ...' / 'Εκδίδομε τον ...'), the table of
+    contents ('ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ'), the first article, or a blank line.
     """
     tail = text[header_end:]
-    stop = re.search(
-        r"(?m)^(?:\s*Ο\s+ΠΡΟΕΔΡΟΣ\b|\s*Άρθρο\s+\d|\s*ΑΡΘΡΟ\s+\d|\n\s*\n)", tail)
+    stop = _TITLE_STOP.search(tail)
     block = tail[: stop.start()] if stop else tail[:600]
     # Collapse internal newlines/space; titles often wrap across several lines.
     title = re.sub(r"\s+", " ", block).strip()

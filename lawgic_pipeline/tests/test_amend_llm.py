@@ -49,9 +49,11 @@ def test_multi_target_split_into_two_ops():
                "αντικαθίστανται ως εξής: «8. … 9. …»")
     extract_amendments_llm(law, complete=_fake({"amendments": [
         {"action": "replaces", "scope": "paragraph", "target_law_number": "4172/2013",
-         "target_article_number": "64", "target_paragraph": "8", "new_text": "8. …"},
+         "target_article_number": "64", "target_paragraph": "8",
+         "new_text": "8. Η παράγραφος όγδοη αντικαθίσταται με νέο κείμενο."},
         {"action": "replaces", "scope": "paragraph", "target_law_number": "4172/2013",
-         "target_article_number": "64", "target_paragraph": "9", "new_text": "9. …"},
+         "target_article_number": "64", "target_paragraph": "9",
+         "new_text": "9. Η παράγραφος ένατη αντικαθίσταται με νέο κείμενο."},
     ]}))
     assert len(law.amendments) == 2
     assert {op.target_id for op in law.amendments} == {
@@ -63,13 +65,14 @@ def test_adds_with_position():
                "παράγραφοι 18 έως 22, ως εξής: «18. …»")
     extract_amendments_llm(law, complete=_fake({"amendments": [{
         "action": "adds", "scope": "paragraph", "target_law_number": None,
-        "target_article_number": "13", "new_text": "18. …",
+        "target_article_number": "13",
+        "new_text": "18. Προστίθεται νέα παράγραφος με ειδικές ρυθμίσεις.",
         "position": "στο τέλος, μετά την παρ. 17"}]}))
     op = law.amendments[0]
     assert op.op == "adds"
     assert op.target_id == "ν.5090/2024#αρ.13"     # in-law (target_law null)
     assert op.resolved is True
-    assert op.new_text == "18. …"
+    assert op.new_text.startswith("18.")
 
 
 def test_self_loop_guard_demotes_to_in_law():
@@ -77,7 +80,8 @@ def test_self_loop_guard_demotes_to_in_law():
     law = _law("Η παρ. 1 του άρθρου 7 αντικαθίσταται ως εξής: «…»", number="346/2025")
     extract_amendments_llm(law, complete=_fake({"amendments": [{
         "action": "replaces", "scope": "paragraph", "target_law_number": "346/2025",
-        "target_article_number": "7", "target_paragraph": "1", "new_text": "…"}]}))
+        "target_article_number": "7", "target_paragraph": "1",
+        "new_text": "1. Η παράγραφος πρώτη αντικαθίσταται με το νέο κείμενο."}]}))
     op = law.amendments[0]
     assert op.target_id == "ν.346/2025#αρ.7.παρ.1"
     assert op.resolved is True          # demoted to in-law, not a cross-law self-loop
@@ -88,6 +92,22 @@ def test_fabrication_guard_drops_empty_edges():
     extract_amendments_llm(law, complete=_fake({"amendments": [
         {"action": "amends", "scope": "article"}]}))   # no article, no new_text
     assert law.amendments == []
+
+
+def test_clean_pass_applies_to_llm_output():
+    # the LLM may return a heading-only banner with a valid target — the shared
+    # _clean_amendments hygiene must drop it just as on the deterministic path,
+    # while keeping the real lower-case edit.
+    law = _law("Στον ν. 4763/2020 προστίθεται κεφάλαιο και αντικαθίσταται άρθρο.")
+    extract_amendments_llm(law, complete=_fake({"amendments": [
+        {"action": "adds", "scope": "article", "target_law_number": "4763/2020",
+         "target_article_number": "40Α",
+         "new_text": "ΚΕΝΤΡΑ ΕΠΑΓΓΕΛΜΑΤΙΚΗΣ ΕΚΠΑΙΔΕΥΣΗΣ ΚΑΙ ΚΑΤΑΡΤΙΣΗΣ"},  # banner -> drop
+        {"action": "replaces", "scope": "article", "target_law_number": "4186/2013",
+         "target_article_number": "9",
+         "new_text": "Άρθρο 9 Πρόγραμμα σπουδών. 1. Τα προγράμματα διδασκαλίας."},  # keep
+    ]}))
+    assert [op.target_id for op in law.amendments] == ["ν.4186/2013#αρ.9"]
 
 
 def test_no_verb_provision_is_not_sent_to_llm():

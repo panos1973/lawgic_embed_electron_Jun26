@@ -98,7 +98,13 @@ telemetry and full tracebacks. Openable from the app (Settings → Open logs fol
 - **HNSW:** `ef=200`, `ef_construction=256`, `max_connections=32`, RQ `rescore_limit=200`
   (over-fetch compressed, re-rank full-precision).
 - **Hybrid (BM25) side:** `b=0.3`, `k1=1.5` (tuned for long Greek legal text),
-  Greek stopword list, Snowball-stemmed `*_stemmed` companion fields.
+  Greek stopword list, plus two Greek-specific companion fields per chunk:
+  `text_normalized` (accent-folded — **precision**) and `text_stemmed` (Snowball-
+  stemmed — **recall** across inflection: νόμος/νόμου/νόμων → one term). Both are
+  written on ingest by the loader. **Query side (TS app):** fold the query for
+  `text_normalized` and run it through `greek_stem.stem_query` for `text_stemmed`
+  — the same transforms applied on ingest — and search both; never stemmed-only
+  (the stemmer is aggressive, so it boosts recall but loses precision alone).
 - **Tokenization per field:** `WORD` (searchable text), `TRIGRAM` (titles/summaries,
   fuzzy), `FIELD` (ids/urls, exact), `LOWERCASE` (`canonical_id` / `hierarchy_path`,
   keeps `Ν.5090/2024` a single token).
@@ -125,7 +131,8 @@ These are the fields the loader populates for every embedded provision today
 | `keywords` | text[] | 5–10 Greek keywords |
 | `chunk_summary` | text (TRIGRAM) | 2–3 sentence Greek summary |
 | `chunk_text` | text (WORD) | **Embedded text** — in-force provision text / markdown table |
-| `text_normalized` | text (WORD) | Accent-folded text for diacritic-insensitive Greek BM25 |
+| `text_normalized` | text (WORD) | Accent-folded text — diacritic-insensitive Greek BM25 (**precision**) |
+| `text_stemmed` | text (WORD) | Snowball-stemmed text — collapses Greek inflection (**recall**) |
 | `table_json` | text (FIELD) | Structured table for exact cell lookup |
 | `amends_provisions` | text[] | What this provision amends |
 | `amended_by_provisions` | text[] | What amends this provision |
@@ -158,6 +165,40 @@ enrichment, embedding telemetry + rotating log.
    laws; ΜΕΡΟΣ/ΚΕΦΑΛΑΙΟ/παρ/annex morphology).
 2. `pipeline/amend.py` — amendment target resolution + cross-law consolidation.
 3. Trained ΔΚΝ model (GLC/Raptarchis47k) to augment the deterministic volumes.
+
+## Amendment extraction — validate before flipping the LLM extractor
+Amendments are the highest-value, hardest edges. Two extractors exist behind one
+switch (`AMEND_EXTRACTOR`, default `deterministic`):
+
+- **`deterministic`** (`pipeline/amend.py`) — regex target resolution. Fast, no
+  key, but mis-aligns *which* `«…»` span belongs to *which* target in articles
+  with multiple nested references.
+- **`llm`** (`pipeline/amend_llm.py`) — provider-agnostic (DeepSeek V4 Pro by
+  default), grounded in real Greek amendment morphology, captures `new_text`, and
+  guards source==target self-loops. Falls back to deterministic (with a log line)
+  if no key is set.
+
+Both extractors run the **same `_clean_amendments` hygiene** (drops heading-only/
+empty edits, self-document dumps, unresolved fragments, exact dupes), so the edge
+set is consistent whichever is active.
+
+**Validate, then flip.** Do not enable `llm` for a full re-embed until it beats
+the deterministic baseline on the gold set:
+
+    # 1. drop the source-law texts named '<law>.txt'/'<law>.pdf' into ./goldlaws
+    # 2. baseline (no key):
+    python lawgic_pipeline/benchmark_amendments.py \
+      --gold lawgic_pipeline/gold_amendments.sample.json --laws-dir ./goldlaws \
+      --extractor deterministic
+    # 3. LLM extractor (set provider + key; DeepSeek V4 Pro non-thinking):
+    AMEND_EXTRACTOR=llm LLM_PROVIDER=deepseek DEEPSEEK_API_KEY=… \
+      python lawgic_pipeline/benchmark_amendments.py \
+        --gold lawgic_pipeline/gold_amendments.sample.json --laws-dir ./goldlaws \
+        --extractor llm
+
+The harness reports precision / recall / F1 and `new_text` coverage. Flip
+`AMEND_EXTRACTOR=llm` for ingestion only once the LLM run wins on F1 *and*
+coverage.
 
 ## Security
 Never commit API keys. `create_all_collections.py` reads the Weaviate key from an

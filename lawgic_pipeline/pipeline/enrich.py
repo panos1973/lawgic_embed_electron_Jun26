@@ -87,6 +87,24 @@ KEYWORD_DOMAIN = {
 }
 
 
+# Ministry / general-secretariat PORTFOLIO names enumerate other policy areas
+# ("εκπρόσωπος του Υπουργείου Ναυτιλίας …", "ο Υπουργός Αγροτικής Ανάπτυξης …")
+# that are NOT the article's own subject. A vocational-education council article
+# listing those ministries was getting stamped ΕΜΠΟΡΙΚΗ ΝΑΥΤΙΛΙΑ / ΓΕΩΡΓΙΚΗ /
+# ΔΙΕΘΝΕΙΣ. We strip the ministry head + its trailing Capitalized portfolio run
+# from the keyword-fallback haystack ONLY (CODE_DOMAIN cited-code patterns are
+# precise and keep the full text). Subject mentions in ordinary prose ("γεωργικές
+# εκμεταλλεύσεις", "νηολόγηση πλοίου") are untouched — they don't follow Υπουργ-.
+_ORG_PORTFOLIO = re.compile(
+    r"(?:Υπουργ\w*|Γενικ\w+\s+Γραμματ\w+|Γραμματ(?:έας|είας|έα))\s+"
+    r"(?:[Α-ΩΆ-Ώ][α-ωά-ώϊϋΐΰ]+\s*|και\s+|,\s*)+")
+
+
+def _strip_portfolios(text: str) -> str:
+    """Remove ministry/secretariat portfolio enumerations for keyword matching."""
+    return _ORG_PORTFOLIO.sub(" ", text)
+
+
 def _add(p, dom):
     if dom not in p.legal_domain:
         p.legal_domain.append(dom)
@@ -112,7 +130,9 @@ def _domains_for(text: str, title: str = "") -> list[str]:
                 doms.append(dom)
             matched = True
     if not matched:
-        folded = fold_for_bm25(text)          # text only — NOT the title
+        # text only — NOT the title; and with ministry portfolio enumerations
+        # stripped so a listed ministry's policy area doesn't leak in as a subject
+        folded = fold_for_bm25(_strip_portfolios(text))
         for kw, dom in KEYWORD_DOMAIN.items():
             if kw in folded and dom not in doms:
                 doms.append(dom)
@@ -169,7 +189,9 @@ _DOMAIN_TO_DKN = {
 _DKN_EXTRA_RAW = {
     "γεωργικ": "ΓΕΩΡΓΙΚΗ ΝΟΜΟΘΕΣΙΑ",
     "αγροτικ": "ΓΕΩΡΓΙΚΗ ΝΟΜΟΘΕΣΙΑ",
-    "καλλιεργ": "ΓΕΩΡΓΙΚΗ ΝΟΜΟΘΕΣΙΑ",
+    # NOTE: "καλλιεργ" removed — it is a false friend matching "καλλιέργεια
+    # δεξιοτήτων" (cultivation of *skills*), which stamped ΓΕΩΡΓΙΚΗ on education
+    # articles. Real farming is caught by γεωργικ/αγροτικ.
     "ναυτιλ": "ΕΜΠΟΡΙΚΗ ΝΑΥΤΙΛΙΑ",
     "πλοίο": "ΕΜΠΟΡΙΚΗ ΝΑΥΤΙΛΙΑ",
     "λιμεν": "ΕΜΠΟΡΙΚΗ ΝΑΥΤΙΛΙΑ",
@@ -205,7 +227,8 @@ def classify_dkn(law: Law) -> Law:
             vol = _DOMAIN_TO_DKN.get(dom)
             if vol and vol not in p.domain_dkn:
                 p.domain_dkn.append(vol)
-        folded = fold_for_bm25(p.text_in_force)   # text only — not the title
+        # text only (not the title), ministry portfolio enumerations stripped
+        folded = fold_for_bm25(_strip_portfolios(p.text_in_force))
         for kw, vol in _DKN_EXTRA.items():
             if kw in folded and vol not in p.domain_dkn:
                 p.domain_dkn.append(vol)
