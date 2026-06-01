@@ -47,8 +47,11 @@ CODE_DOMAIN = {
     r"Κώδικα?\s+Διοικητικής\s+Δικονομίας|ΚΔΔ\b": "administrative",
     r"Εμπορικ\w+\s+Νόμ\w+|Εμπορικ\w+\s+Κώδικ|5325/1932|αξιόγραφ\w+": "commercial",
     r"\bΣύνταγμα\b|Συντάγματος|συνταγματικ\w+": "constitutional",
-    r"Οδηγί\w+\s+\(?(?:ΕΕ|Ε\.Ε\.|ΕΚ)\)?|Κανονισμ\w+\s+\(?(?:ΕΕ|Ε\.Ε\.)\)?|"
-    r"ενωσιακ\w+\s+δίκαι|Ευρωπαϊκ\w+\s+Ένωσ": "eu_law",
+    # EU law as a SUBJECT = citing an EU Directive/Regulation or "ενωσιακό δίκαιο".
+    # NOT a bare "Ευρωπαϊκή Ένωση" mention — that fires on "προγράμματα της Ε.Ε."
+    # (EU programs) and "ενωσιακούς πόρους" (EU funds), which are not EU-law subjects.
+    r"Οδηγί\w+\s+\(?(?:ΕΕ|Ε\.Ε\.|ΕΚ|ΕΟΚ)\)?|Κανονισμ\w+\s+\(?(?:ΕΕ|Ε\.Ε\.|ΕΚ)\)?|"
+    r"ενωσιακ\w+\s+δίκαι|δίκαι\w+\s+της\s+Ευρωπαϊκ\w+\s+Ένωσ": "eu_law",
     r"4387/2016|ασφαλιστικ\w+\s+(?:φορέ|νομοθεσ)|κοινωνικ\w+\s+ασφάλισ|"
     r"συνταξιοδοτικ\w+": "social_security",
     r"4600/2019|4512/2018|υγειονομικ\w+|δημόσι\w+\s+υγεί|\bΕΣΥ\b": "health",
@@ -59,7 +62,10 @@ CODE_DOMAIN = {
     r"4727/2020|ψηφιακ\w+\s+διακυβέρν|ηλεκτρονικ\w+\s+διακυβέρν|"
     r"Κώδικα?\s+Ψηφιακής": "digital",
     r"3883/2010|ένοπλ\w+\s+δυνάμ|στρατιωτικ\w+\s+προσωπικ|εθνικ\w+\s+άμυν": "defense",
-    r"4251/2014|3386/2005|μεταναστευτικ\w+|αλλοδαπ\w+|\bάσυλο\b|"
+    # immigration = migration/asylum law. "αλλοδαπ" alone is a false friend: the
+    # idiom "ημεδαπής ή αλλοδαπής" means domestic/foreign (jurisdiction, bodies),
+    # not aliens — so require migration context (μεταναστ/άσυλο/the cited laws).
+    r"4251/2014|3386/2005|μεταναστευτικ\w+|\bάσυλο\b|"
     r"αιτ\w+\s+ασύλου": "immigration",
 }
 
@@ -78,11 +84,15 @@ KEYWORD_DOMAIN = {
     "μετοχ": "corporate", "εταιρ": "corporate",
     "περιβαλλον": "environmental", "ενεργειακ": "energy",
     "συνταγμα": "constitutional", "συνταγματικ": "constitutional",
-    "ενωσιακ": "eu_law", "ευρωπαικ": "eu_law",
+    # NOTE: bare "ενωσιακ"/"ευρωπαικ" removed — they fire on "ενωσιακούς πόρους"
+    # (EU funds) and "προγράμματα της Ε.Ε." (EU programs), not EU law. Real EU law
+    # is caught precisely by CODE_DOMAIN (cited Directive/Regulation / ενωσιακό δίκαιο).
     "ασφαλιστικ": "social_security", "συνταξ": "social_security",
     "υγειονομ": "health", "νοσοκομει": "health",
     "εκπαιδευ": "education", "πανεπιστημ": "education",
-    "μεταναστ": "immigration", "αλλοδαπ": "immigration",
+    # NOTE: bare "αλλοδαπ" removed (false friend "ημεδαπής ή αλλοδαπής" = abroad);
+    # real migration law keeps μεταναστ + the cited laws/άσυλο in CODE_DOMAIN.
+    "μεταναστ": "immigration",
     "στρατιωτικ": "defense", "ψηφιακ": "digital",
 }
 

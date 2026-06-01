@@ -48,6 +48,37 @@ def test_keyword_fallback_suppressed_when_code_matched():
     assert "civil" not in doms
 
 
+def test_eu_programs_and_funds_are_not_eu_law():
+    # "προγράμματα της Ε.Ε." (EU programs) / "ενωσιακούς πόρους" (EU funds) are
+    # incidental mentions, not EU law as a subject.
+    p = classify_domain(_law("", "ενημερώνονται για προγράμματα της Ευρωπαϊκής "
+                                 "Ένωσης (Ε.Ε.) και διεθνή προγράμματα.")).provisions[0]
+    assert "eu_law" not in p.legal_domain
+    f = classify_domain(_law("", "αποζημίωση που χρηματοδοτείται από εθνικούς ή "
+                                 "ενωσιακούς πόρους.")).provisions[0]
+    assert "eu_law" not in f.legal_domain
+
+
+def test_cited_eu_directive_regulation_is_eu_law():
+    # a real EU-law signal (cited Directive/Regulation) must still be detected.
+    p = classify_domain(_law("", "κατά τον Κανονισμό (ΕΕ) 609/2013 και την "
+                                 "Οδηγία 2009/39/ΕΚ.")).provisions[0]
+    assert "eu_law" in p.legal_domain
+
+
+def test_abroad_idiom_is_not_immigration():
+    # "ημεδαπής ή αλλοδαπής" = domestic/foreign (jurisdiction), not aliens.
+    p = classify_domain(_law("", "φορείς της ημεδαπής ή της αλλοδαπής "
+                                 "συνεργάζονται.")).provisions[0]
+    assert "immigration" not in p.legal_domain
+
+
+def test_real_migration_law_is_immigration():
+    p = classify_domain(_law("", "ο αλλοδαπός υπήκοος τρίτης χώρας υποβάλλει "
+                                 "αίτηση ασύλου κατά τον ν. 4251/2014.")).provisions[0]
+    assert "immigration" in p.legal_domain
+
+
 def test_no_signal_leaves_empty():
     law = classify_domain(_law("", "Γενική διάταξη χωρίς σαφές αντικείμενο 123."))
     assert law.provisions[0].legal_domain == []
