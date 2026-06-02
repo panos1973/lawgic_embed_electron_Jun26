@@ -160,3 +160,38 @@ def test_enrich_llm_gives_up_after_two_failures():
         _enrich.llm.complete = orig
     assert calls["n"] == 2                        # exactly two attempts, then give up
     assert law.provisions[0].chunk_summary == ""  # stayed empty, no crash
+
+
+def test_consumer_protection_law_maps_to_commercial():
+    # ν.2251/1994 (consumer protection) + market-control text must classify as
+    # 'commercial' (and thus ΔΚΝ ΕΜΠΟΡΙΚΗ ΝΟΜΟΘΕΣΙΑ) — the αρ.38 price-rationalisation
+    # gap where both legal_domain and domain_dkn came back empty.
+    from pipeline.enrich import _domains_for
+    text = ("Εξορθολογισμός τιμών. Για τα καταναλωτικά προϊόντα δεν επιτρέπεται "
+            "προωθητική ενέργεια. Κυρώσεις κατά την παρ. 5 του άρθρου 13α του "
+            "ν. 2251/1994.")
+    assert "commercial" in _domains_for(text)
+
+
+def test_consumer_keyword_maps_to_commercial_without_cited_law():
+    # even without the cited law, a consumer-facing market article should map via
+    # the keyword fallback.
+    from pipeline.enrich import _domains_for
+    assert "commercial" in _domains_for("Προστασία του καταναλωτή και έλεγχος αγοράς.")
+
+
+def test_consumption_is_not_commercial():
+    # guard: "κατανάλωση" (consumption) folds to καταναλωσ, not καταναλωτ — an
+    # energy-consumption clause must NOT be tagged commercial by the fallback.
+    from pipeline.enrich import _domains_for
+    doms = _domains_for("Μέτρα για τη μείωση της κατανάλωσης ηλεκτρικής ενέργειας.")
+    assert "commercial" not in doms
+
+
+def test_article38_like_fills_dkn_volume():
+    # end-to-end: the deterministic ΔΚΝ classifier must now stamp ΕΜΠΟΡΙΚΗ
+    # ΝΟΜΟΘΕΣΙΑ on an αρ.38-style article (was empty in the live Gemini run).
+    from pipeline.enrich import classify_dkn
+    law = _law("", "Διαφάνεια τιμών στα καταναλωτικά προϊόντα, ν. 2251/1994.")
+    classify_dkn(law)
+    assert "ΕΜΠΟΡΙΚΗ ΝΟΜΟΘΕΣΙΑ" in law.provisions[0].domain_dkn

@@ -45,7 +45,8 @@ CODE_DOMAIN = {
     # broader subject domains ported from the old app's 17-label set
     r"2690/1999|Κώδικα?\s+Διοικητικής\s+Διαδικασίας|2717/1999|"
     r"Κώδικα?\s+Διοικητικής\s+Δικονομίας|ΚΔΔ\b": "administrative",
-    r"Εμπορικ\w+\s+Νόμ\w+|Εμπορικ\w+\s+Κώδικ|5325/1932|αξιόγραφ\w+": "commercial",
+    r"Εμπορικ\w+\s+Νόμ\w+|Εμπορικ\w+\s+Κώδικ|5325/1932|αξιόγραφ\w+|2251/1994|"
+    r"προστασ\w+\s+(?:του\s+)?καταναλωτ|αγορανομικ\w+|αθέμιτ\w+\s+ανταγωνισμ": "commercial",
     r"\bΣύνταγμα\b|Συντάγματος|συνταγματικ\w+": "constitutional",
     # EU law as a SUBJECT = citing an EU Directive/Regulation or "ενωσιακό δίκαιο".
     # NOT a bare "Ευρωπαϊκή Ένωση" mention — that fires on "προγράμματα της Ε.Ε."
@@ -82,6 +83,11 @@ KEYWORD_DOMAIN = {
     # personal-data law is caught precisely by CODE_DOMAIN (προσωπικά δεδομένα/GDPR).
     "προσωπικα δεδομεν": "data_protection", "απορρητο": "data_protection",
     "μετοχ": "corporate", "εταιρ": "corporate",
+    # consumer / market-regulation law (ν.2251/1994 etc.). "καταναλωτ" matches
+    # καταναλωτής/καταναλωτικά (consumer), NOT "κατανάλωση" (consumption, folds to
+    # καταναλωσ) — so price/market-control articles map to commercial, while
+    # energy/water-consumption text does not false-fire here.
+    "καταναλωτ": "commercial", "αγορανομ": "commercial", "λιανεμπορ": "commercial",
     "περιβαλλον": "environmental", "ενεργειακ": "energy",
     "συνταγμα": "constitutional", "συνταγματικ": "constitutional",
     # NOTE: bare "ενωσιακ"/"ευρωπαικ" removed — they fire on "ενωσιακούς πόρους"
