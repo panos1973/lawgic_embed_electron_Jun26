@@ -80,6 +80,16 @@ def complete(system: str, user: str, want_json: bool = True,
             kwargs["reasoning_effort"] = config.LLM_REASONING_EFFORT
         else:
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    elif config.LLM_PROVIDER == "gemini":
+        # Gemini 2.5 Flash is a thinking model with reasoning ON by default. On the
+        # OpenAI-compatible endpoint that reasoning is billed against the same
+        # max_tokens budget as the answer, so on a tight extraction call (e.g. the
+        # 700-token enrichment) the thinking eats the budget and the JSON comes back
+        # truncated/empty. We disable it (the pipeline's THINKING-OFF intent) via the
+        # Gemini-specific thinking_config so the whole budget goes to the answer.
+        budget = -1 if config.LLM_THINKING else 0   # -1 = dynamic (model decides)
+        kwargs["extra_body"] = {
+            "extra_body": {"google": {"thinking_config": {"thinking_budget": budget}}}}
     resp = ratelimit.with_retry(
         lambda: _client.chat.completions.create(**kwargs), provider=provider)
     return resp.choices[0].message.content or ""
