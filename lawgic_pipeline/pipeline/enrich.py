@@ -378,14 +378,24 @@ def enrich_llm(law: Law, progress=None) -> Law:
     for i, p in enumerate(law.provisions, 1):
         if progress:
             progress(f"{law.instrument_id}: provision {i}/{total}")
-        try:
-            out = llm.complete(_SYSTEM, p.text_in_force, want_json=True, max_tokens=700)
-            data = json.loads(out)
-        except SystemExit:
-            if progress:
-                progress("no LLM key — skipping enrichment")
-            return law            # no API key configured — skip enrichment
-        except Exception:
+        # Retry once: a single truncated/garbled JSON (or a transient provider
+        # hiccup) used to silently zero a provision's whole enrichment. The budget
+        # is 1024 — long articles (e.g. a 13-member council) blew past 700 once the
+        # summary + keywords + EUROVOC + ΔΚΝ lists were emitted, truncating the JSON.
+        data = None
+        for _attempt in range(2):
+            try:
+                out = llm.complete(_SYSTEM, p.text_in_force, want_json=True,
+                                   max_tokens=1024)
+                data = json.loads(out)
+                break
+            except SystemExit:
+                if progress:
+                    progress("no LLM key — skipping enrichment")
+                return law        # no API key configured — skip enrichment
+            except Exception:
+                continue          # bad JSON / transient error -> retry once
+        if data is None:
             continue              # one bad provision shouldn't fail the law
         p.chunk_summary = data.get("summary", p.chunk_summary)
         kw = list(data.get("keywords") or [])

@@ -114,3 +114,49 @@ def test_personal_data_still_detected():
     from pipeline.enrich import _domains_for
     doms = _domains_for("Επεξεργασία προσωπικών δεδομένων κατά τον GDPR.")
     assert "data_protection" in doms
+
+
+def test_enrich_llm_retries_once_on_bad_json():
+    # a single garbled/truncated JSON used to silently zero a provision's whole
+    # enrichment; enrich_llm must retry once and recover on the second answer.
+    import json as _json
+    from pipeline import enrich as _enrich
+    calls = {"n": 0}
+
+    def flaky(system, user, want_json=True, max_tokens=1024):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "not valid json {{{"          # first attempt -> json.loads fails
+        return _json.dumps({"summary": "ΠΕΡΙΛΗΨΗ", "keywords": ["κλειδί"],
+                            "eurovoc": [], "dkn": []})
+
+    law = _law("τίτλος", "Κείμενο διάταξης προς περίληψη.")
+    orig = _enrich.llm.complete
+    _enrich.llm.complete = flaky
+    try:
+        _enrich.enrich_llm(law)
+    finally:
+        _enrich.llm.complete = orig
+    assert calls["n"] == 2                        # retried after the first bad JSON
+    assert law.provisions[0].chunk_summary == "ΠΕΡΙΛΗΨΗ"
+    assert "κλειδί" in law.provisions[0].keywords
+
+
+def test_enrich_llm_gives_up_after_two_failures():
+    # after two failures it must move on without crashing, leaving the fields empty.
+    from pipeline import enrich as _enrich
+    calls = {"n": 0}
+
+    def always_bad(system, user, want_json=True, max_tokens=1024):
+        calls["n"] += 1
+        return "still not json"
+
+    law = _law("τίτλος", "Κείμενο.")
+    orig = _enrich.llm.complete
+    _enrich.llm.complete = always_bad
+    try:
+        _enrich.enrich_llm(law)                   # must not raise
+    finally:
+        _enrich.llm.complete = orig
+    assert calls["n"] == 2                        # exactly two attempts, then give up
+    assert law.provisions[0].chunk_summary == ""  # stayed empty, no crash

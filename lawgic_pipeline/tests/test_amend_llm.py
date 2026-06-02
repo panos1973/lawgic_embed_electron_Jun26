@@ -133,19 +133,23 @@ def test_clean_pass_applies_to_llm_output():
     assert [op.target_id for op in law.amendments] == ["ν.4186/2013#αρ.9"]
 
 
-def test_extraction_method_records_llm_not_pattern_matching():
+def test_extraction_method_records_llm_provider_and_model():
     # the loader denormalizes op.extraction_method into Weaviate; an LLM edge must
-    # carry "llm:<provider>", not the AmendmentOp default "pattern_matching", so the
-    # embedded data tells the truth about which extractor produced the edge.
+    # carry "llm:<provider>:<model>", not the AmendmentOp default "pattern_matching",
+    # so the embedded data tells the truth about which extractor (and which model
+    # version) produced the edge — provider alone can't tell V4 Pro from V4 Flash.
     import config
+    model = config.LLM_MODEL or config.PROVIDERS[config.LLM_PROVIDER]["default_model"]
     law = _law("Το άρθρο 5 του ν. 4412/2016 αντικαθίσταται ως εξής: "
                "«νέο κείμενο του άρθρου με πεζά γράμματα.»")
     extract_amendments_llm(law, complete=_fake({"amendments": [{
         "action": "replaces", "scope": "article", "target_law_number": "4412/2016",
         "target_article_number": "5",
         "new_text": "νέο κείμενο του άρθρου με πεζά γράμματα."}]}))
-    assert law.amendments[0].extraction_method == f"llm:{config.LLM_PROVIDER}"
-    assert law.amendments[0].extraction_method != "pattern_matching"
+    method = law.amendments[0].extraction_method
+    assert method == f"llm:{config.LLM_PROVIDER}:{model}"
+    assert method.startswith(f"llm:{config.LLM_PROVIDER}:")
+    assert method != "pattern_matching"
 
 
 def test_literal_null_case_is_not_appended_to_target_id():

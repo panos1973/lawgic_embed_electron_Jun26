@@ -131,8 +131,12 @@ def extract_amendments_llm(law: Law,
         complete = llm.complete
 
     # record the real extractor on every op so the loader stops labelling LLM
-    # edges as "pattern_matching" (the field is denormalized into Weaviate).
-    method = f"llm:{config.LLM_PROVIDER}"
+    # edges as "pattern_matching" (the field is denormalized into Weaviate). Include
+    # the model so successive re-embeds are distinguishable — provider alone made
+    # DeepSeek V4 Pro and Flash both write "llm:deepseek", indistinguishable in the
+    # store. -> "llm:deepseek:deepseek-v4-pro" / "llm:gemini:gemini-2.5-flash".
+    model = config.LLM_MODEL or config.PROVIDERS[config.LLM_PROVIDER]["default_model"]
+    method = f"llm:{config.LLM_PROVIDER}:{model}"
     own_number = law.instrument_id.split(".")[-1]   # e.g. ν.5090/2024 -> 5090/2024
     seen: dict[str, int] = {}                       # target_id -> next ordinal
 
