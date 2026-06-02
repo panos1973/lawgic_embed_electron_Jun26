@@ -129,6 +129,20 @@ def test_load_amendments_denormalizes_target():
     assert rec["extraction_method"] == "pattern_matching"
 
 
+def test_load_amendments_denormalizes_multiletter_article():
+    # multi-letter Greek article suffixes (6ΣΤ, 17Β, 40Δ) must survive into the
+    # scalar target_article_number — the old '?' regex truncated 6ΣΤ -> 6Σ and
+    # broke filtering by article number for those articles.
+    c = _FakeClient()
+    ops = [AmendmentOp(op="adds", target_id="ν.4186/2013#αρ.6ΣΤ",
+                       scope="article", new_text="…", resolved=False,
+                       sub_edit_ordinal="0")]
+    wio.load_amendments(c, ops, source_law=_law())
+    rec = c.sink["Jun2026Amendment"][0]["props"]
+    assert rec["target_article_number"] == "6ΣΤ"
+    assert rec["target_canonical_id"] == "ν.4186/2013#αρ.6ΣΤ"
+
+
 def test_load_amendments_records_real_extraction_method():
     # an op stamped by the LLM extractor must write its real method, not the
     # previously-hardcoded "pattern_matching" constant.

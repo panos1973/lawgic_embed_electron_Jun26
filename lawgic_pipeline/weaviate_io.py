@@ -186,7 +186,11 @@ def _target_law_number(target_id: str) -> str:
 
 
 def _target_article(target_id: str) -> str:
-    m = re.search(r"#αρ\.(\d+[Α-Ωα-ω]?)", target_id)
+    # capture the FULL Greek-letter suffix (6ΣΤ, 17Β, 40Δ, 151Α), not just the
+    # first letter — '?' truncated multi-letter articles (6ΣΤ -> 6Σ), breaking
+    # scalar filtering by article number. '.' is not in the class, so the match
+    # stops cleanly before '.παρ.'/'.περ.'.
+    m = re.search(r"#αρ\.(\d+[Α-Ωα-ω]*)", target_id)
     return m.group(1) if m else ""
 
 
