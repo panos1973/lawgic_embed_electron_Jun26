@@ -95,8 +95,9 @@ def _rfc3339(date: str | None) -> str | None:
     return None
 
 
-def _flat_props(p: Provision) -> dict:
-    return {
+def _flat_props(p: Provision, law: Law = None, index: int = None,
+                total: int = None) -> dict:
+    props = {
         "canonical_id": p.canonical_id, "instrument_key": p.instrument_key,
         "document_type": p.instrument_type, "law_number": p.instrument_id.split(".")[-1],
         "fek_reference": f"{p.fek_series}_{p.fek_date[:4]}_{p.fek_number}" if p.fek_date else "",
@@ -112,7 +113,18 @@ def _flat_props(p: Provision) -> dict:
         "keywords": p.keywords, "amends_provisions": p.amends,
         "amended_by_provisions": p.amended_by, "external_law_references": p.cites,
         "language": language_of(p.text_in_force or p.text_normalized or ""),
+        # deterministic document-context metadata (no LLM): publication date for
+        # point-in-time filtering, parent-law title for recall/display, and the
+        # chunk's position so a hit can be re-ordered within its law.
+        "publication_date": _rfc3339(p.fek_date or (law.fek_date if law else "")),
+        "document_title": law.title if law else "",
+        "document_title_stemmed": _stem(law.title) if law else "",
+        "chunk_index": index,
+        "total_chunks": total,
     }
+    # drop None so we never write nulls into typed (DATE/INT) fields, and so a
+    # chunk with no table omits table_json rather than storing an empty value
+    return {k: v for k, v in props.items() if v is not None}
 
 
 def _fek_year(law: Law) -> int | None:
@@ -161,15 +173,16 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
     flat = client.collections.use(config.FLAT_COLLECTION).with_tenant(tenant)
     art = client.collections.use(config.GRAPH_ARTICLE).with_tenant(tenant)
 
+    total = len(law.provisions)
     with flat.batch.dynamic() as b:
-        for p, vec in zip(law.provisions, vectors):
-            b.add_object(properties=_flat_props(p), vector=vec,
+        for i, (p, vec) in enumerate(zip(law.provisions, vectors)):
+            b.add_object(properties=_flat_props(p, law, i, total), vector=vec,
                          uuid=generate_uuid5(p.canonical_id))
     if flat.batch.failed_objects:
         raise RuntimeError(f"flat load failed: {flat.batch.failed_objects[:2]}")
 
     with art.batch.dynamic() as b:
-        for p, vec in zip(law.provisions, vectors):
+        for i, (p, vec) in enumerate(zip(law.provisions, vectors)):
             b.add_object(properties={
                 "canonical_id": p.canonical_id, "instrument_key": p.instrument_key,
                 "document_law_number": p.instrument_id.split(".")[-1],
@@ -179,6 +192,7 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
                 "chunk_summary": p.chunk_summary,
                 "chunk_summary_stemmed": _stem(p.chunk_summary),
                 "article_title_stemmed": _stem(p.article_title),
+                "chunk_index": i, "total_chunks": total,
                 "version": p.version,
                 "valid_from": p.valid_from, "valid_to": p.valid_to,
                 "is_current": p.is_current, "content_hash": p.content_hash,
