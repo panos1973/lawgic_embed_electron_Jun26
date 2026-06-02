@@ -68,6 +68,18 @@ _SYSTEM = (
 )
 
 
+def _nz(v) -> str:
+    """Normalize an LLM-supplied locator field to a clean string.
+
+    The model sometimes echoes a JSON null as the literal text "null" (or "none"/
+    "-"/"n/a"). Left unchecked, a target_case of "null" produces a malformed
+    canonical id like 'ν.4763/2020#αρ.18.παρ.4.περ.null'. Treat those sentinels as
+    empty so the locator is simply omitted.
+    """
+    s = (v or "").strip()
+    return "" if s.lower() in ("null", "none", "n/a", "na", "-", "—", "nil") else s
+
+
 def _norm_action(a: str) -> str:
     a = (a or "").strip().lower()
     return a if a in _ACTIONS else "amends"
@@ -141,8 +153,8 @@ def extract_amendments_llm(law: Law,
         for a in (data.get("amendments") or []):
             if not isinstance(a, dict):
                 continue
-            target_law = (a.get("target_law_number") or "").strip() or None
-            article = (a.get("target_article_number") or "").strip()
+            target_law = _nz(a.get("target_law_number")) or None
+            article = _nz(a.get("target_article_number"))
             new_text = (a.get("new_text") or "").strip()
             # fabrication guard: need at least a target article or quoted text
             if not article and not new_text:
@@ -151,8 +163,8 @@ def extract_amendments_llm(law: Law,
             if target_law and target_law == own_number:
                 target_law = None                   # treat as in-law, not a self-loop
 
-            paragraph = (a.get("target_paragraph") or "").strip() or None
-            case = (a.get("target_case") or "").strip() or None
+            paragraph = _nz(a.get("target_paragraph")) or None
+            case = _nz(a.get("target_case")) or None
             law_type = a.get("target_law_type")
             tid = _target_id(target_law, law_type, law.instrument_id,
                              article, paragraph, case)

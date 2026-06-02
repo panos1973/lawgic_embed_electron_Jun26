@@ -148,6 +148,21 @@ def test_extraction_method_records_llm_not_pattern_matching():
     assert law.amendments[0].extraction_method != "pattern_matching"
 
 
+def test_literal_null_case_is_not_appended_to_target_id():
+    # the model sometimes echoes a JSON null as the string "null" for target_case;
+    # it must NOT leak into the canonical id as '.περ.null' (observed in a live run).
+    law = _law("Στην παρ. 4 του άρθρου 18 του ν. 4763/2020 προστίθεται εδάφιο: "
+               "«νέο τρίτο εδάφιο με πεζά γράμματα.»")
+    extract_amendments_llm(law, complete=_fake({"amendments": [{
+        "action": "adds", "scope": "paragraph", "target_law_number": "4763/2020",
+        "target_article_number": "18", "target_paragraph": "4", "target_case": "null",
+        "new_text": "νέο τρίτο εδάφιο με πεζά γράμματα."}]}))
+    assert len(law.amendments) == 1
+    tid = law.amendments[0].target_id
+    assert tid == "ν.4763/2020#αρ.18.παρ.4"
+    assert "null" not in tid and ".περ." not in tid
+
+
 def test_no_verb_provision_is_not_sent_to_llm():
     calls = []
     def spy(system, user, want_json=True, max_tokens=1500):
