@@ -62,6 +62,27 @@ def normalize_glyphs(text: str) -> str:
     return _TOKEN.sub(lambda m: _fix_token(m.group(0)), text)
 
 
+def language_of(text: str) -> str:
+    """Tag a chunk 'el' | 'en' | 'mixed' from its Greek/Latin letter ratio.
+
+    Replaces the hard-coded language='el' so bilingual chunks — e.g. a ratified
+    UN resolution or treaty annex carried verbatim in English inside a Greek law —
+    are labelled honestly. Counts letters only (digits/punctuation ignored);
+    Greek-default when there is no alphabetic content at all.
+    """
+    gr = len(_GREEK.findall(text or ""))
+    lat = len(_LATIN.findall(text or ""))
+    total = gr + lat
+    if total == 0:
+        return "el"
+    lat_frac = lat / total
+    if lat_frac < 0.15:
+        return "el"
+    if lat_frac > 0.85:
+        return "en"
+    return "mixed"
+
+
 def cid_ratio(text: str) -> float:
     if not text:
         return 0.0

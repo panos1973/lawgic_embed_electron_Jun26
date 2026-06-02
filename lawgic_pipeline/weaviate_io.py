@@ -11,11 +11,22 @@ from weaviate.classes.tenants import Tenant
 import config
 from models import Law, Provision, AmendmentOp
 from greek_stem import stem_text
+from pipeline.tables import tables_json
+from pipeline.normalize import language_of
 
 
 def _stem(s: str) -> str:
     """Snowball-stem a short field (summary/title); empty-safe."""
     return stem_text(s) if s else ""
+
+
+def _table_json(p: Provision) -> str | None:
+    """Structured JSON for any table embedded in the chunk (EXACT cell lookup).
+
+    Honour an explicit Provision.table_json if upstream ever sets one; otherwise
+    recover it from the rendered markdown table that lives in text_in_force.
+    """
+    return p.table_json or tables_json(p.text_in_force or "")
 
 
 def connect() -> weaviate.WeaviateClient:
@@ -97,10 +108,10 @@ def _flat_props(p: Provision) -> dict:
         "text_normalized": p.text_normalized, "text_stemmed": p.text_stemmed,
         "chunk_summary_stemmed": _stem(p.chunk_summary),
         "article_title_stemmed": _stem(p.article_title),
-        "table_json": p.table_json,
+        "table_json": _table_json(p),
         "keywords": p.keywords, "amends_provisions": p.amends,
         "amended_by_provisions": p.amended_by, "external_law_references": p.cites,
-        "language": "el",
+        "language": language_of(p.text_in_force or p.text_normalized or ""),
     }
 
 
@@ -163,7 +174,7 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
                 "canonical_id": p.canonical_id, "instrument_key": p.instrument_key,
                 "document_law_number": p.instrument_id.split(".")[-1],
                 "article_number": p.article_no, "article_title": p.article_title,
-                "chunk_text": p.text_in_force, "table_json": p.table_json,
+                "chunk_text": p.text_in_force, "table_json": _table_json(p),
                 "text_normalized": p.text_normalized, "text_stemmed": p.text_stemmed,
                 "chunk_summary": p.chunk_summary,
                 "chunk_summary_stemmed": _stem(p.chunk_summary),

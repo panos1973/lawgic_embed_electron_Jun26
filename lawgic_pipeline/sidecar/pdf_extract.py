@@ -75,6 +75,9 @@ def _column_text(page) -> str:
     if (crossing / len(words) < 0.04 and len(left) >= 8 and len(right) >= 8):
         return "\n".join(_group_lines(left) + _group_lines(right))
     return page.extract_text() or ""
+
+
+def _table_to_markdown(rows) -> str:
     """Render a pdfplumber table (list of row-lists) as a GitHub markdown table.
 
     pdfplumber yields None for empty cells; normalize to "" and collapse internal
