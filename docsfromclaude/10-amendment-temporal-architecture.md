@@ -158,6 +158,119 @@ new edge type fed through the P2 primitive — no backbone change.
 
 ---
 
+## 5A. The timeline-assembly (consolidation) pass — exact algorithm
+
+This generalizes today's `consolidate_cross_law`. The whole thing is **one pure
+function over one article identity**, plus triggers that call it. Order of ingestion
+does not affect the result — only which articles are ready to assemble.
+
+### 5A.1 The core function
+```
+assemble_article_timeline(client, tenant, C)   # C = canonical_id, e.g. "ν.4412/2016#αρ.15"
+
+  # 1. Find the starting (enacted) text.
+  base = enacted_text_for(C)          # the article's text as first written by its own law
+  edges = amendment edges where target_canonical_id == C
+          AND effective_date is not null
+          AND action in {replaces, consolidates, adds, repeals, modifies}
+
+  # 2. If we have neither a base nor an 'adds' that creates it -> nothing to do yet.
+  if base is None and no 'adds' edge in edges:
+      mark those edges pending; return   # base law not ingested yet (out-of-order)
+
+  # 3. Order the edits deterministically.
+  edges = sort(edges, key=(effective_date, sub_edit_ordinal, source_law_number))
+
+  # 4. Seed the timeline.
+  if base exists:
+      timeline = [ V(text=base.text, valid_from=base.effective_date, status="in_force") ]
+  else:                                  # the first 'adds' edge *is* the enacted version
+      first = edges.pop_first_adds()
+      timeline = [ V(text=first.new_text, valid_from=first.effective_date, status="in_force") ]
+
+  # 5. Fold each amendment forward.
+  for e in edges:
+      prev = timeline[-1]
+      prev.valid_to = e.effective_date            # close the previous window
+      if e.action == "repeals":
+          timeline.append(V(text=prev.text, valid_from=e.effective_date,
+                            valid_to=None, status="repealed"))
+          break                                    # repealed: chain ends here
+      else:
+          new_text = apply(e, prev.text)           # replace / add / modify the text
+          timeline.append(V(text=new_text, valid_from=e.effective_date, status="amended"))
+
+  # 6. Flag the head of the chain.
+  timeline[-1].is_current = True                   # newest window; valid_to stays null
+  for v in timeline[:-1]: v.is_current = False
+
+  # 7. Persist (idempotent — see 5A.4).
+  for i, v in enumerate(timeline):
+      v.uuid = generate_uuid5("art:" + C + "@" + v.valid_from)
+      upsert v into ARTICLE collection (graph) and FLAT collection (Option B, with vector)
+      if i > 0: link v.supersedes_article -> timeline[i-1].uuid
+  # point each amendment edge at the version it PRODUCED
+  for e in edges:
+      produced = timeline version whose valid_from == e.effective_date
+      link e.target_article -> produced.uuid
+```
+
+`apply(e, prev.text)`: `replaces`/`consolidates` → `e.new_text` becomes the text;
+`adds` → append the new unit to `prev.text`; `modifies` → same as replace at the
+sub-unit. Article-level granularity: a paragraph/case-scoped edit still rewrites the
+whole article node's text (sub-edit applied within it).
+
+### 5A.2 When it runs (triggers — all call the same function)
+1. **After ingesting a base (older) law** → call `assemble_article_timeline(C)` for
+   each of that law's articles. *This is your scenario:* the moment the old law lands,
+   every amendment edge that was waiting on it gets folded in and the timeline appears.
+2. **After ingesting an amending (newer) law** → for each amendment it emitted, call
+   the function on its `target_canonical_id`. If the base exists, the chain **extends**
+   (the old head gets a `valid_to` and `is_current=False`; a new head is appended). If
+   the base isn't there yet, the edge simply stays pending until trigger 1 fires.
+3. **Standalone `consolidate` / finalize pass** → re-run for every article identity
+   that still has pending edges. Safe to run any time.
+
+### 5A.3 Worked example (today = 2026-06-03)
+Base `ν.4412/2016#αρ.15` enacted 2016-08-08; amended by ν.4782/2021 (eff. 2021-03-09)
+and ν.5090/2024 (eff. 2024-04-01).
+
+- **Ingest 2016 first, then 2021, then 2024:** v1 seeded; 2021 arrives → v1.valid_to=2021-03-09, append v2; 2024 arrives → v2.valid_to=2024-04-01, append v3 (is_current).
+- **Ingest 2024 first (before 2016):** the 2024 edge is stored **pending** (target absent). Ingest 2021 → also pending. Ingest 2016 → seeds v1, folds the two pending edges → v2, v3. **Identical final timeline.**
+
+Result either way:
+```
+v1 2016-08-08 → 2021-03-09   is_current=false
+v2 2021-03-09 → 2024-04-01   is_current=false
+v3 2024-04-01 → (null)       is_current=true   ← served for "now" on 2026-06-03
+```
+`as_of(2022-01-01)` → v2; `as_of(2018)` → v1.
+
+### 5A.4 Idempotency & re-runs
+Version UUID = `"art:"+C+"@"+valid_from`, so re-running produces the **same** ids.
+Before writing, compare the computed text to what's stored; write only on change. The
+**only** node that mutates on a later amendment is the previous head (its `valid_to`
+flips from null to a date and `is_current`→false) plus the one new head appended. No
+duplicates, no schema flags needed.
+
+### 5A.5 Edge cases (decide once, encode explicitly)
+| Case | Rule |
+|---|---|
+| Amendment with **no effective_date** | Cannot place on the timeline → keep pending, surface in `graph-status`. Never guess a date. |
+| Two amendments **same effective_date** | Deterministic tie-break: `sub_edit_ordinal`, then `source_law_number`. |
+| **`adds`** a brand-new article (no base) | The `adds` edge seeds v1 (`valid_from = its effective_date`). |
+| **Repeal then later re-enactment** | Chain ends at repeal (v.status=`repealed`); a later re-enactment is a known gap → flag, handle in a later phase. |
+| Target law simply **not in corpus** | Edge stays pending forever → this is the dangling-target signal (missing base law, e.g. pre-2000). |
+| Sub-article scope (`paragraph`/`case`) | Applied within the article text; node granularity stays article-level. |
+
+### 5A.6 Cost note
+Each version carries its own vector (Option B). Re-assembling on a new amendment
+re-embeds only the **new head** (and re-stamps the prior head's metadata — no re-embed
+of unchanged versions). So steady-state embedding cost ≈ one vector per *new amendment*,
+not per article per run.
+
+---
+
 ## 6. Cost & risk flags
 - **One re-embed** (the version-key UUID scheme changes) — fold it together with the
   pending table/language/metadata re-embed so it's a single pass, not two.
