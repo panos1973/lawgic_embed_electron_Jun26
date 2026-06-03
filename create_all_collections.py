@@ -276,6 +276,15 @@ try:
                      description="in_force | repealed | amended | suspended | pending",
                      data_type=DataType.TEXT, tokenization=Tokenization.WORD,
                      index_filterable=True),
+            # ── Versioning (temporal model: one row per article version) ──
+            Property(name="version", description="1, 2, 3...",
+                     data_type=DataType.INT, index_filterable=True),
+            Property(name="valid_from", description="Version valid from (RFC3339)",
+                     data_type=DataType.DATE, index_filterable=True, index_range_filters=True),
+            Property(name="valid_to", description="Superseded at (null=current)",
+                     data_type=DataType.DATE, index_filterable=True, index_range_filters=True),
+            Property(name="is_current", description="True if latest non-repealed version",
+                     data_type=DataType.BOOL, index_filterable=True),
 
             # ── Classification ──
             Property(name="legal_domain",
@@ -537,6 +546,10 @@ try:
                      data_type=DataType.DATE, index_filterable=True, index_range_filters=True),
             Property(name="is_current", description="True if latest version",
                      data_type=DataType.BOOL, index_filterable=True),
+            Property(name="legal_force_status",
+                     description="in_force | amended | repealed | suspended (per version)",
+                     data_type=DataType.TEXT, tokenization=Tokenization.WORD,
+                     index_filterable=True),
             Property(name="content_hash", description="SHA256 of chunk_text (dedup)",
                      data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
             # Sub-chunking
@@ -645,6 +658,10 @@ try:
                      data_type=DataType.TEXT, tokenization=Tokenization.WORD,
                      index_filterable=True),
             Property(name="target_canonical_id", description="Canonical id of amended provision",
+                     data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE,
+                     index_filterable=True),
+            Property(name="source_canonical_id",
+                     description="Canonical id of the amending (host) provision",
                      data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE,
                      index_filterable=True),
             Property(name="action", description=AMENDMENT_ACTIONS,

@@ -95,6 +95,28 @@ def _rfc3339(date: str | None) -> str | None:
     return None
 
 
+def _version_key(canonical_id: str, valid_from: str | None) -> str:
+    """Stable per-version key: article identity + the date this text became valid.
+    Recomputable from an amendment edge's effective_date, so version upserts and
+    cross-reference links stay idempotent across runs and ingestion orders."""
+    return f"{canonical_id}@{valid_from or 'enacted'}"
+
+
+def _flat_version_uuid(canonical_id: str, valid_from: str | None):
+    return generate_uuid5(_version_key(canonical_id, valid_from))
+
+
+def _art_version_uuid(canonical_id: str, valid_from: str | None):
+    return generate_uuid5("art:" + _version_key(canonical_id, valid_from))
+
+
+def _enacted_valid_from(p: Provision, law: Law = None) -> str | None:
+    """RFC3339 date the provision's enacted text took effect: the provision's own
+    valid_from if set, else its FEK date, else the parent law's FEK date."""
+    return (_rfc3339(p.valid_from) or _rfc3339(p.fek_date)
+            or _rfc3339(law.fek_date if law else None))
+
+
 def _flat_props(p: Provision, law: Law = None, index: int = None,
                 total: int = None) -> dict:
     props = {
@@ -174,16 +196,30 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
     art = client.collections.use(config.GRAPH_ARTICLE).with_tenant(tenant)
 
     total = len(law.provisions)
+    # Each provision lands as its ENACTED version (v1): valid_from = the law's FEK
+    # date, valid_to = null, is_current = True. Later amendments append further
+    # versions via assemble_article_timeline. UUIDs are per-version so the history
+    # is preserved (point-in-time) rather than overwritten.
     with flat.batch.dynamic() as b:
         for i, (p, vec) in enumerate(zip(law.provisions, vectors)):
-            b.add_object(properties=_flat_props(p, law, i, total), vector=vec,
-                         uuid=generate_uuid5(p.canonical_id))
+            vf = _enacted_valid_from(p, law)
+            props = _flat_props(p, law, i, total)
+            props["version"] = p.version
+            props["is_current"] = p.is_current
+            if vf:
+                props["valid_from"] = vf
+            vt = _rfc3339(p.valid_to)
+            if vt:
+                props["valid_to"] = vt
+            b.add_object(properties=props, vector=vec,
+                         uuid=_flat_version_uuid(p.canonical_id, vf))
     if flat.batch.failed_objects:
         raise RuntimeError(f"flat load failed: {flat.batch.failed_objects[:2]}")
 
     with art.batch.dynamic() as b:
         for i, (p, vec) in enumerate(zip(law.provisions, vectors)):
-            b.add_object(properties={
+            vf = _enacted_valid_from(p, law)
+            props = {
                 "canonical_id": p.canonical_id, "instrument_key": p.instrument_key,
                 "document_law_number": p.instrument_id.split(".")[-1],
                 "article_number": p.article_no, "article_title": p.article_title,
@@ -193,13 +229,19 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
                 "chunk_summary_stemmed": _stem(p.chunk_summary),
                 "article_title_stemmed": _stem(p.article_title),
                 "chunk_index": i, "total_chunks": total,
-                "version": p.version,
-                "valid_from": p.valid_from, "valid_to": p.valid_to,
-                "is_current": p.is_current, "content_hash": p.content_hash,
+                "version": p.version, "is_current": p.is_current,
+                "legal_force_status": p.status, "content_hash": p.content_hash,
                 "hierarchy_path": p.hierarchy_path, "legal_domain": p.legal_domain,
                 "domain_dkn": p.domain_dkn, "domain_eurovoc": p.domain_eurovoc,
                 "keywords": p.keywords,
-            }, vector=vec, uuid=generate_uuid5("art:" + p.canonical_id))
+            }
+            if vf:
+                props["valid_from"] = vf
+            vt = _rfc3339(p.valid_to)
+            if vt:
+                props["valid_to"] = vt
+            b.add_object(properties={k: v for k, v in props.items() if v is not None},
+                         vector=vec, uuid=_art_version_uuid(p.canonical_id, vf))
     if art.batch.failed_objects:
         raise RuntimeError(f"article load failed: {art.batch.failed_objects[:2]}")
 
@@ -239,7 +281,17 @@ def load_amendments(client, ops: list[AmendmentOp], source_law: Law = None,
             }
             if src_num:
                 props["source_law_number"] = src_num
-            ed = _rfc3339(op.effective_date)
+            if op.source_id:                       # host provision that made the edit
+                props["source_canonical_id"] = op.source_id
+                sa = _target_article(op.source_id)
+                if sa:
+                    props["source_article_number"] = sa
+            # An amendment takes effect on the publication date of the law that
+            # made it, unless an explicit date was extracted. Falling back to the
+            # source law's FEK date keeps amendments on the timeline instead of
+            # parking every undated edit as "pending".
+            ed = _rfc3339(op.effective_date) or \
+                _rfc3339(source_law.fek_date if source_law else None)
             if ed:
                 props["effective_date"] = ed
             b.add_object(properties=props,
@@ -280,22 +332,74 @@ def load_delegations(client, edges, source_law: Law = None, tenant: str = None):
         raise RuntimeError(f"delegation load failed: {deleg.batch.failed_objects[:2]}")
 
 
-def consolidate_cross_law(client, tenant: str = None) -> dict:
-    """Store-level cross-law consolidation pass.
+def _apply_edit(edge: dict, prev_text: str) -> str:
+    """Article text AFTER applying one amendment edge to prev_text (docs §5A)."""
+    action = edge.get("action")
+    nt = (edge.get("new_text") or "").strip()
+    if action == "repeals":
+        return prev_text                       # text frozen; status marks repealed
+    if action == "adds" and nt:
+        return (prev_text + "\n" + nt).strip() if prev_text else nt
+    if nt:                                     # replaces / consolidates / modifies
+        return nt
+    return prev_text
 
-    Walks unapplied replace/consolidate amendment edges whose target law is
-    already ingested, and rewrites the target provision's in-force text (flat +
-    article collections) to the new text. This is the half of consolidation that
-    cannot happen during a single document's run, because the target law's text
-    only exists once that law has itself been ingested.
 
-    Idempotent without any schema change: an edge is skipped when the target
-    provision already holds the new text (so re-running applies nothing new).
-    Tenant-scoped. Uses the deterministic UUID of the target provision to
-    fetch/patch it — no vector search (pinpoint via metadata only, honouring the
-    non-vector-for-pinpoint rule).
+def _upsert_version(coll, uuid, props, vector=None) -> bool:
+    """Insert a version node, or patch it if present. Returns True iff NEW (so
+    re-runs over unchanged data write nothing)."""
+    props = {k: v for k, v in props.items() if v is not None}
+    existing = coll.query.fetch_object_by_id(uuid)
+    if existing is None:
+        coll.data.insert(properties=props, uuid=uuid, vector=vector)
+        return True
+    if (existing.properties or {}) == props:
+        return False                           # unchanged -> idempotent no-op
+    coll.data.update(uuid=uuid, properties=props, vector=vector)
+    return False
 
-    Returns {"applied": n, "already": k, "skipped_missing_target": m}.
+
+# Version-specific fields recomputed per version; everything else is cloned from
+# the base node so each version keeps the article's stable identity/search fields.
+_VERSION_FIELDS = {"chunk_text", "text_normalized", "text_stemmed", "language",
+                   "version", "is_current", "legal_force_status",
+                   "valid_from", "valid_to", "content_hash"}
+
+
+def _write_version_pair(flat, art, flat_base, art_base, tcid, text, vf, version,
+                        status, is_current, embed, valid_to=None) -> int:
+    """Upsert one version onto BOTH flat + article. Returns 1 iff a node was newly
+    created (used to count versions_written)."""
+    vec = embed([text]) if text else None
+    vector = vec[0] if vec else None
+    common = {"chunk_text": text, "language": language_of(text or ""),
+              "text_stemmed": _stem(text), "text_normalized": text,
+              "version": version, "is_current": is_current,
+              "legal_force_status": status, "valid_from": vf, "valid_to": valid_to}
+    fprops = {k: v for k, v in flat_base.items() if k not in _VERSION_FIELDS}
+    aprops = {k: v for k, v in art_base.items() if k not in _VERSION_FIELDS}
+    fprops.update(common); aprops.update(common)
+    new_f = _upsert_version(flat, _flat_version_uuid(tcid, vf), fprops, vector)
+    new_a = _upsert_version(art, _art_version_uuid(tcid, vf), aprops, vector)
+    return 1 if (new_f or new_a) else 0
+
+
+def assemble_article_timeline(client, tenant: str = None) -> dict:
+    """Build the version timeline for every article that amendment edges target.
+
+    Per target article: seed from its enacted version (or, if the article was
+    *created* by an 'adds', from that edge), fold the amendment edges forward by
+    effective_date — setting valid_from/valid_to/is_current and writing a repeal as
+    a terminal 'repealed' version — and upsert one node per version on the flat +
+    article collections (Option B: both temporally filterable). Implements §5A.
+
+    Order-independent: edges whose target law is not yet ingested are counted
+    `pending` and resolved on a later run. Idempotent: per-version UUIDs are
+    deterministic and unchanged versions are skipped. (Amended versions recompute
+    chunk_text/language/text_stemmed; the richer normalize fold is left to a future
+    pass — noted in docs §5A.)
+
+    Returns {"articles": a, "versions_written": v, "pending": p}.
     """
     from voyage_embed import embed_law_chunks
 
@@ -303,37 +407,111 @@ def consolidate_cross_law(client, tenant: str = None) -> dict:
     amd = client.collections.use(config.GRAPH_AMENDMENT).with_tenant(tenant)
     flat = client.collections.use(config.FLAT_COLLECTION).with_tenant(tenant)
     art = client.collections.use(config.GRAPH_ARTICLE).with_tenant(tenant)
+    doc = client.collections.use(config.GRAPH_DOCUMENT).with_tenant(tenant)
 
-    applied = already = skipped = 0
-    # only replace/consolidate edges carry replacement text worth applying
+    by_target: dict[str, list] = {}
     for obj in amd.iterator():
         p = obj.properties
-        if p.get("action") not in ("replaces", "consolidates"):
-            continue
-        new_text = (p.get("new_text") or "").strip()
-        target_id = p.get("target_canonical_id") or ""
-        if not new_text or not target_id:
-            continue
+        tcid = (p.get("target_canonical_id") or "").strip()
+        if tcid and (p.get("effective_date") or "").strip():
+            by_target.setdefault(tcid, []).append(p)
 
-        target_uuid = generate_uuid5(target_id)
-        existing = flat.query.fetch_object_by_id(target_uuid)
-        if existing is None:
-            skipped += 1                       # target law not yet ingested
-            continue
-        if (existing.properties or {}).get("chunk_text", "").strip() == new_text:
-            already += 1                       # already consolidated -> no-op
-            continue
+    articles = versions = pending = 0
+    for tcid, edges in by_target.items():
+        edges.sort(key=lambda e: ((e.get("effective_date") or ""),
+                                  (e.get("sub_edit_ordinal") or ""),
+                                  (e.get("source_law_number") or "")))
+        instrument_id = tcid.split("#", 1)[0]
+        docobj = doc.query.fetch_object_by_id(generate_uuid5("doc:" + instrument_id))
+        base_vf = docobj.properties.get("publication_date") if docobj else None
+        base_flat = (flat.query.fetch_object_by_id(_flat_version_uuid(tcid, base_vf))
+                     if base_vf else None)
+        base_art = (art.query.fetch_object_by_id(_art_version_uuid(tcid, base_vf))
+                    if base_vf else None)
 
-        vec = embed_law_chunks([new_text])
-        vector = vec[0] if vec else None
-        flat.data.update(uuid=target_uuid,
-                         properties={"chunk_text": new_text,
-                                     "legal_force_status": "amended"},
-                         vector=vector)
-        art.data.update(uuid=generate_uuid5("art:" + target_id),
-                        properties={"chunk_text": new_text, "is_current": True},
-                        vector=vector)
-        applied += 1
+        adds = [e for e in edges if e.get("action") == "adds"]
+        if base_art is None and not adds:
+            pending += len(edges)              # target law not ingested yet
+            continue
+        articles += 1
 
-    return {"applied": applied, "already": already,
-            "skipped_missing_target": skipped}
+        flat_base = (dict(base_flat.properties) if base_flat else
+                     {"canonical_id": tcid, "law_number": _target_law_number(tcid),
+                      "article_number": _target_article(tcid)})
+        art_base = (dict(base_art.properties) if base_art else
+                    {"canonical_id": tcid, "document_law_number": _target_law_number(tcid),
+                     "article_number": _target_article(tcid)})
+
+        if base_art is not None:
+            cur_text = base_art.properties.get("chunk_text") or ""
+            cur_vf = base_vf
+            version = int(base_art.properties.get("version") or 1)
+        else:                                  # 'adds' creates the article -> seed v1
+            seed = adds[0]
+            edges = [e for e in edges if e is not seed]
+            cur_text, cur_vf, version = (seed.get("new_text") or ""), seed.get("effective_date"), 1
+            versions += _write_version_pair(flat, art, flat_base, art_base, tcid,
+                                            cur_text, cur_vf, version, "in_force",
+                                            True, embed_law_chunks)
+
+        for e in edges:
+            new_vf = e.get("effective_date")
+            new_text = _apply_edit(e, cur_text)
+            if new_vf == cur_vf:               # same-date edit -> fold, no new window
+                cur_text = new_text
+                continue
+            # close the previous window (no re-embed; metadata only)
+            _write_version_pair(flat, art, flat_base, art_base, tcid, cur_text,
+                                cur_vf, version, flat_base.get("legal_force_status")
+                                or "in_force", False, embed_law_chunks, valid_to=new_vf)
+            version += 1
+            status = "repealed" if e.get("action") == "repeals" else "amended"
+            versions += _write_version_pair(flat, art, flat_base, art_base, tcid,
+                                            new_text, new_vf, version, status, True,
+                                            embed_law_chunks)
+            cur_text, cur_vf = new_text, new_vf
+            if e.get("action") == "repeals":
+                break
+
+    return {"articles": articles, "versions_written": versions, "pending": pending}
+
+
+# Back-compat alias: the orchestrator/CLI still call consolidate_cross_law.
+consolidate_cross_law = assemble_article_timeline
+
+
+def graph_status(client, tenant: str = None) -> dict:
+    """Amendment-graph completeness / QA report — the extraction-accuracy lens.
+
+    For every amendment edge, classify whether its target law is present in the
+    store. A `dangling` target (target law absent after a full ingest) is either a
+    missing base law (e.g. pre-2000) or a mis-resolved reference; `undated` edges
+    couldn't be placed on a timeline. Read-only.
+
+    Returns {"amendments", "target_law_present", "target_law_missing", "undated",
+             "dangling_targets" (sample)}.
+    """
+    tenant = tenant or config.DEFAULT_TENANT
+    amd = client.collections.use(config.GRAPH_AMENDMENT).with_tenant(tenant)
+    doc = client.collections.use(config.GRAPH_DOCUMENT).with_tenant(tenant)
+
+    total = present = missing = undated = 0
+    dangling: set[str] = set()
+    for obj in amd.iterator():
+        p = obj.properties
+        total += 1
+        if not (p.get("effective_date") or "").strip():
+            undated += 1
+        tcid = (p.get("target_canonical_id") or "").strip()
+        instrument_id = tcid.split("#", 1)[0] if tcid else ""
+        docobj = (doc.query.fetch_object_by_id(generate_uuid5("doc:" + instrument_id))
+                  if instrument_id else None)
+        if docobj is None:
+            missing += 1
+            if tcid:
+                dangling.add(tcid)
+        else:
+            present += 1
+    return {"amendments": total, "target_law_present": present,
+            "target_law_missing": missing, "undated": undated,
+            "dangling_targets": sorted(dangling)[:50]}

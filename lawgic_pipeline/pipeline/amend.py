@@ -166,7 +166,8 @@ def extract_amendments(law: Law) -> Law:
                 law.amendments.append(AmendmentOp(
                     op=op, target_id=target_id, scope=scope,
                     new_text=new_text, resolved=resolved,
-                    sub_edit_ordinal=str(ordinal)))
+                    sub_edit_ordinal=str(ordinal),
+                    source_id=p.canonical_id))     # host provision that made the edit
     law.amendments = _clean_amendments(law.amendments, own)
     return law
 

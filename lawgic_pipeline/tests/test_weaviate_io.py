@@ -143,6 +143,28 @@ def test_load_amendments_denormalizes_multiletter_article():
     assert rec["target_canonical_id"] == "ν.4186/2013#αρ.6ΣΤ"
 
 
+def test_load_amendments_writes_source_and_effective_date_fallback():
+    # source_id -> source_canonical_id (+ derived source_article_number); an op
+    # with no explicit effective_date falls back to the amending law's FEK date.
+    c = _FakeClient()
+    ops = [AmendmentOp(op="replaces", target_id="ν.4675/2024#αρ.24",
+                       scope="article", new_text="νέο", resolved=True,
+                       sub_edit_ordinal="1", source_id="ν.5090/2024#αρ.3")]
+    wio.load_amendments(c, ops, source_law=_law())   # _law().fek_date == 2024-03-26
+    rec = c.sink["Jun2026Amendment"][0]["props"]
+    assert rec["source_canonical_id"] == "ν.5090/2024#αρ.3"
+    assert rec["source_article_number"] == "3"
+    assert rec["effective_date"] == "2024-03-26T00:00:00Z"   # fell back to source law
+
+
+def test_load_amendments_explicit_effective_date_wins():
+    c = _FakeClient()
+    ops = [AmendmentOp(op="replaces", target_id="ν.4675/2024#αρ.24", scope="article",
+                       new_text="νέο", effective_date="2025-01-01", sub_edit_ordinal="1")]
+    wio.load_amendments(c, ops, source_law=_law())
+    assert c.sink["Jun2026Amendment"][0]["props"]["effective_date"] == "2025-01-01T00:00:00Z"
+
+
 def test_load_amendments_records_real_extraction_method():
     # an op stamped by the LLM extractor must write its real method, not the
     # previously-hardcoded "pattern_matching" constant.
@@ -272,98 +294,181 @@ def test_loader_props_are_declared_in_schema():
         assert not undeclared, f"{coll}: loader writes undeclared props {undeclared}"
 
 
-# --- cross-law consolidation: self-contained fake store -------------------------
+# --- versioned timeline assembly: full in-memory store (all collections) --------
 from weaviate.util import generate_uuid5  # noqa: E402
 
 
-class _ConsoData:
-    def __init__(self, store):
-        self.store = store
-        self.updates = []
-
-    def update(self, uuid, properties, vector=None):
-        self.updates.append(uuid)
-        if uuid in self.store:
-            self.store[uuid].update(properties)
-
-
-class _ConsoQuery:
-    def __init__(self, store):
-        self.store = store
-
-    def fetch_object_by_id(self, uuid):
-        if uuid not in self.store:
-            return None
-        return type("Obj", (), {"properties": self.store[uuid]})
-
-
-class _ConsoColl:
-    def __init__(self, store, edges=None):
-        self.data = _ConsoData(store)
-        self.query = _ConsoQuery(store)
-        self._edges = edges or []
+class _VColl:
+    """One collection over a shared {name: {uuid: props}} store; supports the
+    batch/insert/update/fetch/iterator surface assemble_article_timeline uses."""
+    def __init__(self, store, name):
+        self.store, self.name = store, name
+        self.failed_objects = []
 
     def with_tenant(self, t):
         return self
 
-    def iterator(self):
-        for e in self._edges:
-            yield type("E", (), {"uuid": e["uuid"], "properties": e["props"]})
-
-
-class _ConsoClient:
-    def __init__(self, store, edges):
-        self._flat = _ConsoColl(store)
-        self._art = _ConsoColl(store)
-        self._amd = _ConsoColl(store, edges)
-
-    def collections_use_map(self):
-        return {"flat": self._flat, "art": self._art, "amd": self._amd}
-
-    class _Collections:
-        def __init__(self, outer):
-            self.outer = outer
-
-        def use(self, name):
-            import config
-            return {config.FLAT_COLLECTION: self.outer._flat,
-                    config.GRAPH_ARTICLE: self.outer._art,
-                    config.GRAPH_AMENDMENT: self.outer._amd}[name]
-
     @property
-    def collections(self):
-        return _ConsoClient._Collections(self)
+    def tenants(self):
+        return type("T", (), {"get": lambda self_: {"gr": object()},
+                              "create": lambda self_, ts: None})()
+
+    # batch
+    @property
+    def batch(self):
+        return self
+
+    def dynamic(self):
+        store, name = self.store, self.name
+
+        class Ctx:
+            def __enter__(self_): return self_
+            def __exit__(self_, *a): return False
+            def add_object(self_, properties, uuid, vector=None):
+                store.setdefault(name, {})[uuid] = dict(properties)
+        return Ctx()
+
+    # data
+    @property
+    def data(self):
+        store, name = self.store, self.name
+
+        class D:
+            def insert(self_, properties, uuid, vector=None):
+                store.setdefault(name, {})[uuid] = dict(properties)
+
+            def update(self_, uuid, properties, vector=None):
+                store.setdefault(name, {}).setdefault(uuid, {}).update(properties)
+        return D()
+
+    # query
+    @property
+    def query(self):
+        store, name = self.store, self.name
+
+        class Q:
+            def fetch_object_by_id(self_, uuid):
+                d = store.get(name, {}).get(uuid)
+                return None if d is None else type("Obj", (), {"properties": d, "uuid": uuid})
+        return Q()
+
+    def iterator(self, **kw):
+        for uuid, d in list(self.store.get(self.name, {}).items()):
+            yield type("E", (), {"uuid": uuid, "properties": d})
 
 
-def test_consolidate_cross_law_applies_then_idempotent(monkeypatch):
+class _VClient:
+    def __init__(self):
+        self.store = {}
+        outer = self
+
+        class Colls:
+            def use(self_, name): return _VColl(outer.store, name)
+            def exists(self_, name): return True
+        self.collections = Colls()
+
+    def close(self):
+        pass
+
+
+def _base_law():
+    law = Law(instrument_id="ν.4412/2016", instrument_key="N4412/2016",
+              instrument_type=TYPE_NOMOS, title="Βάση", fek_date="2016-08-08")
+    law.provisions.append(Provision(
+        canonical_id="ν.4412/2016#αρ.15", instrument_id="ν.4412/2016",
+        instrument_key="N4412/2016", instrument_type=TYPE_NOMOS,
+        article_no="15", chunk_type="article", text_in_force="αρχικό κείμενο"))
+    return law
+
+
+def _amending_law(date):
+    return Law(instrument_id="ν.5090/2024", instrument_key="N5090/2024",
+               instrument_type=TYPE_NOMOS, fek_date=date)
+
+
+def test_timeline_builds_v2_and_closes_v1(monkeypatch):
     import voyage_embed as ve
-    monkeypatch.setattr(ve, "embed_law_chunks", lambda chunks: [[0.0] * 4 for _ in chunks])
+    monkeypatch.setattr(ve, "embed_law_chunks", lambda ch: [[0.0] * 4 for _ in ch])
+    c = _VClient()
+    base = _base_law()
+    wio.load_document(c, base)
+    wio.load_law(c, base, [[0.0] * 4])
+    wio.load_amendments(c, [AmendmentOp(
+        op="replaces", target_id="ν.4412/2016#αρ.15", scope="article",
+        new_text="νέο κείμενο", effective_date="2024-04-01", sub_edit_ordinal="1",
+        source_id="ν.5090/2024#αρ.2")], source_law=_amending_law("2024-04-01"))
 
-    target_id = "ν.4675/2024#αρ.24"
-    store = {generate_uuid5(target_id): {"chunk_text": "παλιό"},
-             generate_uuid5("art:" + target_id): {"chunk_text": "παλιό"}}
-    edges = [{"uuid": "e1", "props": {"action": "replaces",
-                                      "new_text": "νέο κείμενο",
-                                      "target_canonical_id": target_id}}]
-    client = _ConsoClient(store, edges)
+    r = wio.assemble_article_timeline(c, tenant="gr")
+    assert r["articles"] == 1 and r["versions_written"] == 1 and r["pending"] == 0
 
-    r1 = wio.consolidate_cross_law(client, tenant="gr")
-    assert r1["applied"] == 1 and r1["skipped_missing_target"] == 0
-    assert store[generate_uuid5(target_id)]["chunk_text"] == "νέο κείμενο"
+    arts = c.store["Jun2026LawArticle"]
+    v1 = arts[wio._art_version_uuid("ν.4412/2016#αρ.15", "2016-08-08T00:00:00Z")]
+    v2 = arts[wio._art_version_uuid("ν.4412/2016#αρ.15", "2024-04-01T00:00:00Z")]
+    assert v1["valid_to"] == "2024-04-01T00:00:00Z" and v1["is_current"] is False
+    assert v2["chunk_text"] == "νέο κείμενο" and v2["is_current"] is True
+    assert v2["valid_from"] == "2024-04-01T00:00:00Z" and v2["version"] == 2
+    # flat collection is versioned too (Option B)
+    assert wio._flat_version_uuid("ν.4412/2016#αρ.15", "2024-04-01T00:00:00Z") \
+        in c.store["Jun2026GRLegaDocs"]
+    # idempotent: a second run writes no new version
+    assert wio.assemble_article_timeline(c, tenant="gr")["versions_written"] == 0
 
-    # second run: target already holds new text -> no-op
-    r2 = wio.consolidate_cross_law(client, tenant="gr")
-    assert r2["applied"] == 0 and r2["already"] == 1
 
-
-def test_consolidate_skips_missing_target(monkeypatch):
+def test_timeline_out_of_order_then_resolves(monkeypatch):
     import voyage_embed as ve
-    monkeypatch.setattr(ve, "embed_law_chunks", lambda chunks: [[0.0] * 4 for _ in chunks])
-    edges = [{"uuid": "e1", "props": {"action": "replaces", "new_text": "νέο",
-                                      "target_canonical_id": "ν.9999/2099#αρ.1"}}]
-    client = _ConsoClient({}, edges)         # empty store -> target not ingested
-    r = wio.consolidate_cross_law(client, tenant="gr")
-    assert r["applied"] == 0 and r["skipped_missing_target"] == 1
+    monkeypatch.setattr(ve, "embed_law_chunks", lambda ch: [[0.0] * 4 for _ in ch])
+    c = _VClient()
+    # amendment arrives BEFORE the base law it targets
+    wio.load_amendments(c, [AmendmentOp(
+        op="replaces", target_id="ν.4412/2016#αρ.15", scope="article",
+        new_text="νέο", effective_date="2024-04-01", sub_edit_ordinal="1")],
+        source_law=_amending_law("2024-04-01"))
+    r0 = wio.assemble_article_timeline(c, tenant="gr")
+    assert r0["pending"] == 1 and r0["articles"] == 0      # parked, no base yet
+
+    # base law lands later -> same assembly resolves it
+    base = _base_law()
+    wio.load_document(c, base)
+    wio.load_law(c, base, [[0.0] * 4])
+    r1 = wio.assemble_article_timeline(c, tenant="gr")
+    assert r1["articles"] == 1 and r1["versions_written"] == 1
+
+
+def test_graph_status_flags_dangling_target(monkeypatch):
+    import voyage_embed as ve
+    monkeypatch.setattr(ve, "embed_law_chunks", lambda ch: [[0.0] * 4 for _ in ch])
+    c = _VClient()
+    base = _base_law()
+    wio.load_document(c, base)
+    wio.load_law(c, base, [[0.0] * 4])
+    # one resolvable amendment (target law present) + one dangling (target absent)
+    wio.load_amendments(c, [
+        AmendmentOp(op="replaces", target_id="ν.4412/2016#αρ.15", scope="article",
+                    new_text="νέο", effective_date="2024-04-01", sub_edit_ordinal="1"),
+        AmendmentOp(op="replaces", target_id="ν.9999/2099#αρ.1", scope="article",
+                    new_text="x", effective_date="2024-04-01", sub_edit_ordinal="2"),
+    ], source_law=_amending_law("2024-04-01"))
+    s = wio.graph_status(c, tenant="gr")
+    assert s["amendments"] == 2
+    assert s["target_law_present"] == 1 and s["target_law_missing"] == 1
+    assert "ν.9999/2099#αρ.1" in s["dangling_targets"]
+
+
+def test_timeline_repeal_marks_terminal(monkeypatch):
+    import voyage_embed as ve
+    monkeypatch.setattr(ve, "embed_law_chunks", lambda ch: [[0.0] * 4 for _ in ch])
+    c = _VClient()
+    base = _base_law()
+    wio.load_document(c, base)
+    wio.load_law(c, base, [[0.0] * 4])
+    wio.load_amendments(c, [AmendmentOp(
+        op="repeals", target_id="ν.4412/2016#αρ.15", scope="article",
+        effective_date="2025-01-01", sub_edit_ordinal="1")],
+        source_law=_amending_law("2025-01-01"))
+    wio.assemble_article_timeline(c, tenant="gr")
+    rep = c.store["Jun2026LawArticle"][
+        wio._art_version_uuid("ν.4412/2016#αρ.15", "2025-01-01T00:00:00Z")]
+    assert rep["legal_force_status"] == "repealed"
 
 
 if __name__ == "__main__":

@@ -96,10 +96,21 @@ Real-FEK hardening (validated against samplefek/ corpus):
     binary so the Windows .exe needs no Python install; adapt the old app's
     windows-latest build-and-release CI.
 
-Tests: lawgic_pipeline/tests/ — 112 passing (masthead, segment, amend, enrich
+Tests: lawgic_pipeline/tests/ — 214 passing (masthead, segment, amend, enrich
 domain + document_category + dkn, delegate, normalize, quality, multiact, refs,
-weaviate_io loaders, extract integration, full-spine e2e, validate harness).
+weaviate_io loaders + versioned timeline assembly + graph-status, extract
+integration, full-spine e2e, validate harness).
 Run: `python -m pytest tests/ -q`.
+
+Versioned temporal model (docs/10-amendment-temporal-architecture.md): provisions
+load as their ENACTED version (per-version UUID "art:"+canonical_id+"@"+valid_from;
+flat keyed the same). assemble_article_timeline (aliased as consolidate_cross_law,
+driven by `cli consolidate`) folds amendment edges forward by effective_date into
+valid_from/valid_to/is_current/legal_force_status versions on flat + article, so
+retrieval can answer both "in force now" (is_current) and "as of date D"
+(valid_from<=D<valid_to). `cli graph-status` reports dangling amendment targets.
+The per-version UUID scheme requires a recreate + re-ingest to take effect. TODO:
+cross-reference population (target_article/supersedes) + P1/P2 retrieval API.
 
 ## Remaining (where accuracy is still won)
 1. trained ΔΚΝ model (GLC/Raptarchis47k) to augment the deterministic ΔΚΝ
@@ -110,7 +121,9 @@ Run: `python -m pytest tests/ -q`.
 
 ## Non-negotiables
 - Insert with .with_tenant("gr") (done in weaviate_io) — never omit.
-- Serve/store text_in_force (consolidated), not as-enacted, for current-law answers.
+- Serve/store text_in_force (consolidated) for current-law answers — under the
+  versioned model this is the is_current version; earlier versions are retained
+  (not overwritten) so point-in-time / as-of-date answers stay possible.
 - Embed whole law together (voyage-context-3 nested) — contextualization.
 - Idempotent: UUID from canonical_id; content_hash dedup in state.
 - Rotate the Weaviate key that was previously exposed.
