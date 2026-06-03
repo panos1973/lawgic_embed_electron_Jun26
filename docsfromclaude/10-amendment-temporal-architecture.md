@@ -134,6 +134,16 @@ collection.
 
 ## 5. Phased build
 
+> **Implementation status (branch claude/dazzling-cannon-qcmZk):** steps 1–2, 4, 5
+> are **code-complete and tested** (214 passing) — schema fields, source-side
+> capture + effective-date fallback, versioned `load_law`, `assemble_article_timeline`
+> (§5A), `graph_status`, and the `consolidate`/`graph-status` CLI. **Remaining:**
+> step 3 cross-reference *population* (`target_article`/`supersedes_article` links —
+> the data + UUIDs are ready, the `reference_add` pass is not yet written) and step 6
+> the P1/P2 retrieval API. **Operational:** the per-version UUID change needs a
+> collection recreate + re-ingest on the live cluster before it takes effect.
+
+
 1. **Lock the versioned schema** — version-key (§2.1), `valid_to`, status values,
    confirm `supersedes_article`/`target_article` refs. *(decision + schema)*
 2. **Versioned loader + repeal application** — append versions with validity
