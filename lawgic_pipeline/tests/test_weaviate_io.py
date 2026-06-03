@@ -143,6 +143,28 @@ def test_load_amendments_denormalizes_multiletter_article():
     assert rec["target_canonical_id"] == "ν.4186/2013#αρ.6ΣΤ"
 
 
+def test_load_amendments_writes_source_and_effective_date_fallback():
+    # source_id -> source_canonical_id (+ derived source_article_number); an op
+    # with no explicit effective_date falls back to the amending law's FEK date.
+    c = _FakeClient()
+    ops = [AmendmentOp(op="replaces", target_id="ν.4675/2024#αρ.24",
+                       scope="article", new_text="νέο", resolved=True,
+                       sub_edit_ordinal="1", source_id="ν.5090/2024#αρ.3")]
+    wio.load_amendments(c, ops, source_law=_law())   # _law().fek_date == 2024-03-26
+    rec = c.sink["Jun2026Amendment"][0]["props"]
+    assert rec["source_canonical_id"] == "ν.5090/2024#αρ.3"
+    assert rec["source_article_number"] == "3"
+    assert rec["effective_date"] == "2024-03-26T00:00:00Z"   # fell back to source law
+
+
+def test_load_amendments_explicit_effective_date_wins():
+    c = _FakeClient()
+    ops = [AmendmentOp(op="replaces", target_id="ν.4675/2024#αρ.24", scope="article",
+                       new_text="νέο", effective_date="2025-01-01", sub_edit_ordinal="1")]
+    wio.load_amendments(c, ops, source_law=_law())
+    assert c.sink["Jun2026Amendment"][0]["props"]["effective_date"] == "2025-01-01T00:00:00Z"
+
+
 def test_load_amendments_records_real_extraction_method():
     # an op stamped by the LLM extractor must write its real method, not the
     # previously-hardcoded "pattern_matching" constant.

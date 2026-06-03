@@ -239,7 +239,17 @@ def load_amendments(client, ops: list[AmendmentOp], source_law: Law = None,
             }
             if src_num:
                 props["source_law_number"] = src_num
-            ed = _rfc3339(op.effective_date)
+            if op.source_id:                       # host provision that made the edit
+                props["source_canonical_id"] = op.source_id
+                sa = _target_article(op.source_id)
+                if sa:
+                    props["source_article_number"] = sa
+            # An amendment takes effect on the publication date of the law that
+            # made it, unless an explicit date was extracted. Falling back to the
+            # source law's FEK date keeps amendments on the timeline instead of
+            # parking every undated edit as "pending".
+            ed = _rfc3339(op.effective_date) or \
+                _rfc3339(source_law.fek_date if source_law else None)
             if ed:
                 props["effective_date"] = ed
             b.add_object(properties=props,
