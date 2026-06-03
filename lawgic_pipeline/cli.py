@@ -110,10 +110,11 @@ def cmd_ingest(folder: str):
         # edges + version chains span laws and must NOT run concurrently). Safe,
         # idempotent, skips targets not yet ingested.
         try:
-            res = wio.consolidate_cross_law(client)
+            res = wio.assemble_article_timeline(client)
             emit({"type": "stage", "doc": "", "stage": "consolidate",
-                  "msg": f"applied={res.get('applied',0)} already={res.get('already',0)} "
-                         f"skipped={res.get('skipped_missing_target',0)}"})
+                  "msg": f"articles={res.get('articles',0)} "
+                         f"versions={res.get('versions_written',0)} "
+                         f"pending={res.get('pending',0)}"})
         except Exception as e:                           # never fail the run on this
             emit({"type": "stage", "doc": "", "stage": "consolidate",
                   "msg": f"skipped: {e}"})
@@ -127,17 +128,39 @@ def cmd_ingest(folder: str):
 
 
 def cmd_consolidate():
-    """Store-level cross-law consolidation: apply external amendment edges whose
-    target law is now ingested. Idempotent — safe to re-run."""
+    """Build the versioned amendment timeline: append article versions from
+    amendment edges whose target law is now ingested. Idempotent — safe to re-run."""
     import weaviate_io as wio
     client = wio.connect()
     try:
-        result = wio.consolidate_cross_law(client)
+        result = wio.assemble_article_timeline(client)
         emit({"type": "consolidate", **result})
         if not JSON:
-            print(f"Cross-law consolidation: applied={result['applied']} "
-                  f"already={result['already']} "
-                  f"skipped(target missing)={result['skipped_missing_target']}")
+            print(f"Timeline assembly: articles={result['articles']} "
+                  f"versions_written={result['versions_written']} "
+                  f"pending(target missing)={result['pending']}")
+    finally:
+        client.close()
+
+
+def cmd_graph_status():
+    """Amendment-graph completeness / QA report. Surfaces dangling targets —
+    amendment edges whose target law is absent (missing base law or a bad
+    resolution) — and undated edges. This is the extraction-accuracy lens."""
+    import weaviate_io as wio
+    client = wio.connect()
+    try:
+        result = wio.graph_status(client)
+        emit({"type": "graph-status", **result})
+        if not JSON:
+            print(f"Amendments: {result['amendments']}  "
+                  f"target_law_present={result['target_law_present']}  "
+                  f"target_law_missing={result['target_law_missing']}  "
+                  f"undated={result['undated']}")
+            if result["dangling_targets"]:
+                print("Dangling targets (sample):")
+                for t in result["dangling_targets"]:
+                    print(f"  {t}")
     finally:
         client.close()
 
@@ -266,7 +289,8 @@ def main():
     sub.add_parser("status")
     sub.add_parser("review")
     sub.add_parser("retry")
-    sub.add_parser("consolidate")
+    sub.add_parser("consolidate")              # build versioned amendment timeline
+    sub.add_parser("graph-status")             # amendment-graph QA / dangling report
     sub.add_parser("collections")              # list collections + counts
     sub.add_parser("reset-state")              # clear local ingest history
     rp = sub.add_parser("reset")               # wipe a collection (keep schema)
@@ -278,6 +302,7 @@ def main():
     {"ingest": lambda: cmd_ingest(args.folder), "status": cmd_status,
      "review": cmd_review, "retry": cmd_retry,
      "consolidate": cmd_consolidate,
+     "graph-status": cmd_graph_status,
      "collections": cmd_collections,
      "reset-state": cmd_reset_state,
      "reset": lambda: cmd_reset(args.target)}[args.cmd]()
