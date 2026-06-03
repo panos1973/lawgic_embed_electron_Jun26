@@ -177,6 +177,43 @@ def test_flat_and_article_write_bm25_fields():
     assert flat["article_title_stemmed"]                      # title stemmed
 
 
+def test_loader_populates_table_json_and_language():
+    """A chunk that carries a rendered markdown table must get a structured
+    table_json (not None) on both search collections, and the language tag must
+    reflect the actual script mix instead of a hard-coded 'el'."""
+    import json
+    law = _law()
+    p = law.provisions[0]
+    p.text_in_force = ("Πίνακας τελών\n| Υπηρεσία | Τέλος |\n| --- | --- |\n"
+                       "| Α | 10 |\n| Β | 20 |")
+    c = _FakeClient()
+    wio.load_law(c, law, [[0.0] * 4])
+    flat = c.sink["Jun2026GRLegaDocs"][0]["props"]
+    art = c.sink["Jun2026LawArticle"][0]["props"]
+    for props in (flat, art):
+        assert json.loads(props["table_json"]) == \
+            [[["Υπηρεσία", "Τέλος"], ["Α", "10"], ["Β", "20"]]]
+    assert flat["language"] == "el"           # Greek chunk -> el (not hard-coded)
+    # deterministic doc-context metadata now populated (was declared-but-empty)
+    assert flat["publication_date"] == "2024-03-26T00:00:00Z"   # from law.fek_date
+    assert flat["document_title"] == "Δοκιμαστικός νόμος"
+    assert flat["document_title_stemmed"]
+    assert flat["chunk_index"] == 0 and flat["total_chunks"] == 1
+    assert art["chunk_index"] == 0 and art["total_chunks"] == 1
+
+
+def test_loader_table_json_none_and_language_for_english_chunk():
+    law = _law()
+    law.provisions[0].text_in_force = (
+        "The Security Council, acting under Chapter VII, decides to extend the "
+        "mandate and authorises the measures set out herein.")
+    c = _FakeClient()
+    wio.load_law(c, law, [[0.0] * 4])
+    flat = c.sink["Jun2026GRLegaDocs"][0]["props"]
+    assert flat.get("table_json") is None     # no table -> key omitted (no null)
+    assert flat["language"] == "en"           # verbatim English body tagged en
+
+
 def test_loader_props_are_declared_in_schema():
     """Guard against the chunk_text_stemmed/text_stemmed class of bug: every
     property the loaders write must be a property the schema declares, else the

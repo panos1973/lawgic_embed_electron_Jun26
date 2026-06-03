@@ -11,11 +11,22 @@ from weaviate.classes.tenants import Tenant
 import config
 from models import Law, Provision, AmendmentOp
 from greek_stem import stem_text
+from pipeline.tables import tables_json
+from pipeline.normalize import language_of
 
 
 def _stem(s: str) -> str:
     """Snowball-stem a short field (summary/title); empty-safe."""
     return stem_text(s) if s else ""
+
+
+def _table_json(p: Provision) -> str | None:
+    """Structured JSON for any table embedded in the chunk (EXACT cell lookup).
+
+    Honour an explicit Provision.table_json if upstream ever sets one; otherwise
+    recover it from the rendered markdown table that lives in text_in_force.
+    """
+    return p.table_json or tables_json(p.text_in_force or "")
 
 
 def connect() -> weaviate.WeaviateClient:
@@ -84,8 +95,9 @@ def _rfc3339(date: str | None) -> str | None:
     return None
 
 
-def _flat_props(p: Provision) -> dict:
-    return {
+def _flat_props(p: Provision, law: Law = None, index: int = None,
+                total: int = None) -> dict:
+    props = {
         "canonical_id": p.canonical_id, "instrument_key": p.instrument_key,
         "document_type": p.instrument_type, "law_number": p.instrument_id.split(".")[-1],
         "fek_reference": f"{p.fek_series}_{p.fek_date[:4]}_{p.fek_number}" if p.fek_date else "",
@@ -97,11 +109,22 @@ def _flat_props(p: Provision) -> dict:
         "text_normalized": p.text_normalized, "text_stemmed": p.text_stemmed,
         "chunk_summary_stemmed": _stem(p.chunk_summary),
         "article_title_stemmed": _stem(p.article_title),
-        "table_json": p.table_json,
+        "table_json": _table_json(p),
         "keywords": p.keywords, "amends_provisions": p.amends,
         "amended_by_provisions": p.amended_by, "external_law_references": p.cites,
-        "language": "el",
+        "language": language_of(p.text_in_force or p.text_normalized or ""),
+        # deterministic document-context metadata (no LLM): publication date for
+        # point-in-time filtering, parent-law title for recall/display, and the
+        # chunk's position so a hit can be re-ordered within its law.
+        "publication_date": _rfc3339(p.fek_date or (law.fek_date if law else "")),
+        "document_title": law.title if law else "",
+        "document_title_stemmed": _stem(law.title) if law else "",
+        "chunk_index": index,
+        "total_chunks": total,
     }
+    # drop None so we never write nulls into typed (DATE/INT) fields, and so a
+    # chunk with no table omits table_json rather than storing an empty value
+    return {k: v for k, v in props.items() if v is not None}
 
 
 def _fek_year(law: Law) -> int | None:
@@ -150,24 +173,26 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
     flat = client.collections.use(config.FLAT_COLLECTION).with_tenant(tenant)
     art = client.collections.use(config.GRAPH_ARTICLE).with_tenant(tenant)
 
+    total = len(law.provisions)
     with flat.batch.dynamic() as b:
-        for p, vec in zip(law.provisions, vectors):
-            b.add_object(properties=_flat_props(p), vector=vec,
+        for i, (p, vec) in enumerate(zip(law.provisions, vectors)):
+            b.add_object(properties=_flat_props(p, law, i, total), vector=vec,
                          uuid=generate_uuid5(p.canonical_id))
     if flat.batch.failed_objects:
         raise RuntimeError(f"flat load failed: {flat.batch.failed_objects[:2]}")
 
     with art.batch.dynamic() as b:
-        for p, vec in zip(law.provisions, vectors):
+        for i, (p, vec) in enumerate(zip(law.provisions, vectors)):
             b.add_object(properties={
                 "canonical_id": p.canonical_id, "instrument_key": p.instrument_key,
                 "document_law_number": p.instrument_id.split(".")[-1],
                 "article_number": p.article_no, "article_title": p.article_title,
-                "chunk_text": p.text_in_force, "table_json": p.table_json,
+                "chunk_text": p.text_in_force, "table_json": _table_json(p),
                 "text_normalized": p.text_normalized, "text_stemmed": p.text_stemmed,
                 "chunk_summary": p.chunk_summary,
                 "chunk_summary_stemmed": _stem(p.chunk_summary),
                 "article_title_stemmed": _stem(p.article_title),
+                "chunk_index": i, "total_chunks": total,
                 "version": p.version,
                 "valid_from": p.valid_from, "valid_to": p.valid_to,
                 "is_current": p.is_current, "content_hash": p.content_hash,
