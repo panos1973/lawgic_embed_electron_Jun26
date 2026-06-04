@@ -1,7 +1,10 @@
-"""llm.py — one call, three providers (Claude · DeepSeek V4 · Gemini).
+"""llm.py — one call, five providers (Claude · DeepSeek V4 · Gemini · OpenAI · Qwen).
 
-Dispatch on config.LLM_PROVIDER. Claude uses the Anthropic SDK; DeepSeek and
-Gemini use the OpenAI SDK against their OpenAI-compatible endpoints.
+Dispatch on config.LLM_PROVIDER. Claude uses the Anthropic SDK; the rest use the
+OpenAI SDK — OpenAI natively (base_url=None), DeepSeek / Gemini / Qwen via their
+OpenAI-compatible base_url. JSON mode (response_format=json_object) is requested for
+extraction calls so the body comes back as pure JSON the callers json.loads directly
+— no code-fence/preamble stripping needed.
 
 CACHING NOTE: keep the SYSTEM prompt byte-identical across calls (stable prefix)
 and put the variable per-provision text in the USER message (suffix). DeepSeek
@@ -90,6 +93,15 @@ def complete(system: str, user: str, want_json: bool = True,
         budget = -1 if config.LLM_THINKING else 0   # -1 = dynamic (model decides)
         kwargs["extra_body"] = {
             "extra_body": {"google": {"thinking_config": {"thinking_budget": budget}}}}
+    elif config.LLM_PROVIDER == "qwen":
+        # Qwen3 (e.g. qwen-plus) is a hybrid thinking model. DashScope's
+        # OpenAI-compatible endpoint toggles it via enable_thinking; we keep it OFF
+        # for extraction (the pipeline default) so reasoning doesn't eat the budget.
+        # NOTE: thinking ON requires streaming on DashScope, which this path doesn't
+        # use — so leave LLM_THINKING off for qwen unless a streaming path is added.
+        kwargs["extra_body"] = {"enable_thinking": bool(config.LLM_THINKING)}
+    # "openai" (gpt-4.1 / gpt-4.1-mini): non-reasoning models — no thinking knob,
+    # JSON mode already set above; nothing provider-specific to add.
     resp = ratelimit.with_retry(
         lambda: _client.chat.completions.create(**kwargs), provider=provider)
     return resp.choices[0].message.content or ""

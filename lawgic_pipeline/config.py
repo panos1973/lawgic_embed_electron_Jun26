@@ -28,8 +28,10 @@ AZURE_DI_KEY = os.environ.get("DI_KEY", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")   # Alibaba DashScope (Qwen)
 
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")   # anthropic | deepseek | gemini
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")   # anthropic|deepseek|gemini|openai|qwen
 LLM_MODEL = os.environ.get("LLM_MODEL", "")                  # blank -> provider default
 LLM_THINKING = os.environ.get("LLM_THINKING", "off").lower() in ("on", "true", "1")
 LLM_REASONING_EFFORT = os.environ.get("LLM_REASONING_EFFORT", "high")  # low|medium|high (DeepSeek, when thinking on)
@@ -52,6 +54,16 @@ PROVIDERS = {
     "gemini":    {"sdk": "openai",
                   "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
                   "key": "GEMINI_API_KEY", "default_model": "gemini-2.5-flash"},
+    "openai":    {"sdk": "openai", "base_url": None,   # native api.openai.com/v1
+                  # gpt-4.1 is NOT a reasoning model: no thinking to disable, JSON
+                  # mode supported. Override the exact snapshot via LLM_MODEL.
+                  "key": "OPENAI_API_KEY", "default_model": "gpt-4.1-2025-04-14"},
+    "qwen":      {"sdk": "openai",
+                  # Alibaba DashScope, OpenAI-compatible (international endpoint).
+                  # For the China region use dashscope.aliyuncs.com; for a
+                  # self-hosted Qwen3 (DAEDALUS) point base_url at that server.
+                  "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                  "key": "DASHSCOPE_API_KEY", "default_model": "qwen-plus"},
 }
 
 # --- Tenancy ---

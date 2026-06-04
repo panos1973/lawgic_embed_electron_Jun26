@@ -70,6 +70,28 @@ def test_deepseek_thinking_disabled_uses_deepseek_flag():
     assert kw["extra_body"] == {"thinking": {"type": "disabled"}}
 
 
+def test_openai_sends_no_thinking_extra_body():
+    # gpt-4.1 is non-reasoning: JSON mode set, and NO provider-specific extra_body
+    # (which could break the request), regardless of the THINKING flag.
+    kw = _capture("openai", thinking=False)
+    assert kw["response_format"] == {"type": "json_object"}
+    assert "extra_body" not in kw
+    assert "extra_body" not in _capture("openai", thinking=True)
+
+
+def test_qwen_disables_thinking_by_default():
+    # Qwen3 hybrid thinking is turned OFF for extraction so it doesn't eat the budget.
+    assert _capture("qwen", thinking=False)["extra_body"] == {"enable_thinking": False}
+    assert _capture("qwen", thinking=True)["extra_body"] == {"enable_thinking": True}
+
+
+def test_new_providers_are_registered():
+    # both providers must resolve to a default model so model_name() never blanks.
+    for prov in ("openai", "qwen"):
+        assert prov in config.PROVIDERS
+        assert config.PROVIDERS[prov]["default_model"]
+
+
 if __name__ == "__main__":
     import subprocess
     sys.exit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"]))
