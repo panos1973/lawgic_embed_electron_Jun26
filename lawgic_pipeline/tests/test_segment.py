@@ -194,3 +194,48 @@ def test_markdown_article_heading_anchor_no_bleed():
     assert [p.article_no for p in law.provisions] == ["41", "42", "43"]
     a41 = next(p for p in law.provisions if p.article_no == "41")
     assert "Άρθρο 42" not in a41.text_in_force
+
+
+def test_enacted_body_quote_is_segmented_not_masked():
+    """A codification/ratification quotes its WHOLE enacted body inside one outer
+    « » ('Κυρώνεται ο Κώδικας ... ως εξής: «Άρθρο 1 ... Άρθρο N ...»'). That dominant
+    quote is the instrument's own law, not an amendment insertion, so its articles
+    must be segmented — not masked away to a single 'document' fallback chunk (the
+    π.δ.62/2025 Κώδικας Εργατικού Δικαίου bug: a clean text layer -> 0 articles)."""
+    law = Law(instrument_id="π.δ.99/2025", instrument_key="x",
+              instrument_type=TYPE_NOMOS)
+    body = "\n".join(f"Άρθρο {i}\nΤίτλος {i}\nΟυσιαστική διάταξη {i} με κείμενο."
+                     for i in range(1, 9))
+    txt = "ΠΡΟΕΔΡΙΚΟ ΔΙΑΤΑΓΜΑ\nΚυρώνεται ο Κώδικας που έχει ως εξής:\n«\n" + body + "\n»\n"
+    law = segment(txt, law)
+    arts = [p for p in law.provisions if p.chunk_type == "article"]
+    assert [p.article_no for p in arts] == [str(i) for i in range(1, 9)]
+    assert all(p.chunk_type != "document" for p in law.provisions)   # no fallback
+    assert "Ουσιαστική διάταξη 1" in arts[0].text_in_force            # real body, not masked
+
+
+def test_large_single_replacement_quote_still_masked():
+    """A big quoted REPLACEMENT (one article's worth, few headers) is an insertion,
+    not an enacted body — it must stay masked even when it is most of a short
+    amending law. Guards the enacted-body heuristic against false positives."""
+    law = Law(instrument_id="ν.9/2025", instrument_key="x",
+              instrument_type=TYPE_NOMOS)
+    inserted = "Άρθρο 5\n" + ("Νέο εκτενές κείμενο της αντικατάστασης. " * 30)
+    txt = "Άρθρο 1\nΑντικατάσταση\nΤο άρθρο 5 αντικαθίσταται ως εξής:\n«" + inserted + "»\n"
+    law = segment(txt, law)
+    nums = [p.article_no for p in law.provisions if p.chunk_type == "article"]
+    assert nums == ["1"]                          # the quoted Άρθρο 5 stays masked
+
+
+def test_correspondence_table_reference_body_dropped():
+    """A bare 'Άρθρο N' whose body is itself an article reference ('Άρθρο M, όπως
+    ...') is a codification correspondence/derivation-table row (new article ->
+    source provision), not substantive law — it must not become a provision."""
+    law = Law(instrument_id="π.δ.62/2025", instrument_key="x",
+              instrument_type=TYPE_NOMOS)
+    txt = ("Άρθρο 1\nΣκοπός\nΟ Κώδικας ρυθμίζει τις σχέσεις εργασίας με σαφήνεια.\n"
+           "Άρθρο 678\nΆρθρο 679, όπως διαμορφώθηκε και ισχύει\n"
+           "Άρθρο 680\nΆρθρο 681 ΑΚ\n")
+    law = segment(txt, law)
+    nums = [p.article_no for p in law.provisions if p.chunk_type == "article"]
+    assert nums == ["1"]                          # table rows 678/680 dropped

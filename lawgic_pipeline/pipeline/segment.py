@@ -50,6 +50,10 @@ _ORDER = ["book", "part", "chapter", "section"]
 _KEYWORD = {"book": "ΒΙΒΛΙΟ", "part": "ΜΕΡΟΣ", "chapter": "ΚΕΦΑΛΑΙΟ",
             "section": "ΤΜΗΜΑ"}
 
+# A provision body that opens with a bare "Άρθρο N" reference is a correspondence/
+# derivation-table row, not a real article (real bodies open with the title text).
+_REF_BODY = re.compile(r"Άρθρο\s+\d")
+
 
 def _first_line(block: str) -> str:
     for line in block.splitlines():
@@ -59,33 +63,71 @@ def _first_line(block: str) -> str:
     return ""
 
 
-def _quoted_spans(text: str) -> list[tuple[int, int]]:
-    """Char ranges enclosed in Greek guillemets « … » (depth-aware).
+# A quoted span longer than this fraction of the whole instrument, AND carrying a
+# run of article headers, is not a local insertion — it is the enacted/ratified
+# body itself. A codification/ratification quotes its entire code in one outer span
+# ("Κυρώνεται ο Κώδικας ... ως εξής: «Άρθρο 1 ... Άρθρο 587 ...»"); masking it would
+# blank the whole document (π.δ.62/2025 -> 0 articles, one 'document' chunk). The
+# article-count floor keeps a single large *replacement* insertion (one article's
+# worth of quoted text) masked, so only genuine enacted bodies are segmented.
+_ENACTED_BODY_FRACTION = 0.6
+_ENACTED_MIN_ARTICLES = 5
+_ARTICLE_HEADER_HINT = re.compile(r"(?m)^[^\S\r\n]*#{0,6}[^\S\r\n]*Άρθρο[^\S\r\n]+\d")
 
-    Amending laws quote the text they insert/replace inside « », and that quoted
-    block frequently contains its OWN 'Άρθρο 40Α', 'ΚΕΦΑΛΑΙΟ ΣΤ1' headers — but
-    those are articles of the TARGET law, not of this enacting law. We must not
-    segment on headers inside these spans; they belong to the host (amending)
-    article and travel with it. Returns top-level spans only (handles nesting).
+
+def _quote_forest(text: str) -> list[dict]:
+    """Parse balanced « » into a nesting forest of {start, end, children} nodes.
+
+    An unclosed « (truncated/missing close) is closed at end of text, so a dangling
+    quote can't let inserted headers leak back in as real articles.
     """
-    spans: list[tuple[int, int]] = []
-    depth = 0
-    start = -1
+    roots: list[dict] = []
+    stack: list[dict] = []
     for i, ch in enumerate(text):
         if ch == "«":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "»" and depth > 0:
-            depth -= 1
-            if depth == 0 and start >= 0:
-                spans.append((start, i))
-                start = -1
-    # an unclosed « (truncated/missing close): treat to end of text so a dangling
-    # quote can't let inserted headers leak back in as real articles
-    if depth > 0 and start >= 0:
-        spans.append((start, len(text)))
-    return spans
+            stack.append({"start": i, "children": []})
+        elif ch == "»" and stack:
+            node = stack.pop()
+            node["end"] = i
+            (stack[-1]["children"] if stack else roots).append(node)
+    while stack:                                   # unclosed -> close to end
+        node = stack.pop()
+        node["end"] = len(text)
+        (stack[-1]["children"] if stack else roots).append(node)
+    return roots
+
+
+def _quoted_spans(text: str) -> list[tuple[int, int]]:
+    """Char ranges that must be EXCLUDED from segmentation (depth-aware).
+
+    Amending laws quote the text they insert/replace inside « », and that quoted
+    block frequently contains its OWN 'Άρθρο 40Α', 'ΚΕΦΑΛΑΙΟ ΣΤ1' headers — articles
+    of the TARGET law, not of this enacting law. We must not segment on headers
+    inside these spans; they belong to the host (amending) article and travel with
+    it. Returns top-level spans (handles nesting).
+
+    Exception: a quote that dominates the instrument and itself holds a run of
+    article headers is the enacted body of a codification/ratification, not an
+    insertion — segment INSIDE it and mask only its nested children (the foreign
+    quotes inside the code's own articles).
+    """
+    n = len(text)
+    masks: list[tuple[int, int]] = []
+
+    def visit(nodes: list[dict]) -> None:
+        for nd in nodes:
+            inner = text[nd["start"]:nd["end"]]
+            enacted_body = (
+                len(inner) > _ENACTED_BODY_FRACTION * n
+                and len(_ARTICLE_HEADER_HINT.findall(inner)) >= _ENACTED_MIN_ARTICLES)
+            if enacted_body:
+                visit(nd["children"])              # unmask self, mask foreign quotes
+            else:
+                masks.append((nd["start"], nd["end"]))
+
+    visit(_quote_forest(text))
+    masks.sort()
+    return masks
 
 
 def _in_spans(pos: int, spans: list[tuple[int, int]]) -> bool:
@@ -161,6 +203,13 @@ def segment(text: str, law: Law) -> Law:
         # artifact (codifying π.δ. end up with hundreds of bare "Άρθρο X" pairs).
         # Within one instrument an article number is unique, so keep the first.
         if not body or art_no in seen_articles:
+            continue
+        # A body that is ITSELF a bare article reference ("Άρθρο 679, όπως ...") is
+        # a correspondence/derivation-table row — codifications close with tables
+        # mapping each codified article to its source provision — not substantive
+        # law. Skip without claiming the number, so a real header for it elsewhere
+        # can still be emitted.
+        if _REF_BODY.match(body):
             continue
         seen_articles.add(art_no)
         title = _first_line(body)
