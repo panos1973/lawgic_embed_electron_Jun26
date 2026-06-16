@@ -9,7 +9,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import weaviate_io as wio  # noqa: E402  (conftest stubs the weaviate SDK)
-from models import Law, Provision, AmendmentOp, TYPE_NOMOS  # noqa: E402
+from models import (Law, Provision, AmendmentOp, DelegationEdge,  # noqa: E402
+                    TYPE_NOMOS)
 
 
 class _FakeData:
@@ -278,17 +279,29 @@ def test_loader_props_are_declared_in_schema():
         if name:
             declared[name] = props
 
-    # build a representative law and capture what each loader actually writes
+    # build a representative law and capture what each loader actually writes.
+    # The amendment op carries source_id + effective_date so the optional scalar
+    # props (source_*/effective_date) are exercised too.
     law = Law(instrument_id="ν.5090/2024", instrument_key="N5090/2024",
               instrument_type=TYPE_NOMOS, title="Δοκιμή", fek_date="2024-03-26")
     segment.segment("Άρθρο 1\nΟι διατάξεις τροποποιούνται.\n", law)
     c = _FakeClient()
     wio.load_law(c, law, [[0.0] * 4])
     wio.load_document(c, law)
+    wio.load_amendments(c, [AmendmentOp(
+        op="replaces", target_id="ν.4675/2024#αρ.24.παρ.2", scope="paragraph",
+        new_text="νέο", resolved=True, sub_edit_ordinal="1",
+        source_id="ν.5090/2024#αρ.3", effective_date="2025-01-01")], source_law=law)
+    wio.load_delegations(c, [DelegationEdge(
+        enabling_id="ν.4412/2016#αρ.5", implementing_id="Β΄913/2025#1",
+        enabling_law_number="4412/2016", enabling_article_number="5",
+        delegated_authority="Υπουργός", delegation_scope="σκοπός")], source_law=law)
 
     pairs = [(config.FLAT_COLLECTION, c.sink["Jun2026GRLegaDocs"][0]["props"]),
              (config.GRAPH_ARTICLE, c.sink["Jun2026LawArticle"][0]["props"]),
-             (config.GRAPH_DOCUMENT, c.sink["Jun2026LawDocument"][0]["props"])]
+             (config.GRAPH_DOCUMENT, c.sink["Jun2026LawDocument"][0]["props"]),
+             (config.GRAPH_AMENDMENT, c.sink["Jun2026Amendment"][0]["props"]),
+             (config.GRAPH_DELEGATION, c.sink["Jun2026Delegation"][0]["props"])]
     for coll, written in pairs:
         undeclared = set(written) - declared.get(coll, set())
         assert not undeclared, f"{coll}: loader writes undeclared props {undeclared}"

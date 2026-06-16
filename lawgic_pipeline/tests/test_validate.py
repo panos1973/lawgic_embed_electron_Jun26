@@ -49,6 +49,39 @@ def test_quality_flags_catch_short_bodies():
     assert any(f.startswith("many_short_bodies") for f in flags)
 
 
+def test_validate_act_decision_identified():
+    """A FEK Β decision act (as split out by multiact) is identified with a decision
+    id and segmented — not left as a single masthead_unidentified review record."""
+    from pipeline.multiact import ActSegment
+    from models import TYPE_KYA
+    seg = ActSegment(
+        instrument_type=TYPE_KYA, number="52785", item=1, issuer="ΟΙ ΥΠΟΥΡΓΟΙ",
+        title="Τροποποίηση κοινής υπουργικής απόφασης",
+        text=("Άρθρο 1\nΣκοπός\nΚαθορίζονται οι όροι εφαρμογής της παρούσας απόφασης.\n"
+              "Άρθρο 2\nΈναρξη ισχύος\nΗ ισχύς αρχίζει από τη δημοσίευση στο ΦΕΚ."),
+        is_decision=True)
+    mh = {"fek_series": "Β", "fek_number": "913", "year": 2025,
+          "fek_date": "2025-05-01", "title": ""}
+    rec = validate._validate_act(seg, mh, [])
+    assert rec["status"] == "ok"
+    assert rec["instrument_id"] == "Β΄913/2025#1"
+    assert rec["provisions"] >= 2
+    assert "masthead_unidentified" not in rec["flags"]
+
+
+def test_validate_act_without_gazette_coords_is_review():
+    """An act that cannot be given a stable canonical id (missing gazette
+    coordinates) routes to review rather than getting a colliding placeholder id."""
+    from pipeline.multiact import ActSegment
+    from models import TYPE_KYA
+    seg = ActSegment(instrument_type=TYPE_KYA, number="x", item=None,
+                     issuer="ΟΙ ΥΠΟΥΡΓΟΙ", title="t", text="Άρθρο 1\nΚείμενο.",
+                     is_decision=True)
+    rec = validate._validate_act(seg, {"fek_series": "", "fek_number": "", "year": None}, [])
+    assert rec["status"] == "review"
+    assert "masthead_unidentified" in rec["flags"]
+
+
 def test_quality_flags_catch_homoglyph_residue():
     from models import Law, Provision, TYPE_NOMOS
     law = Law(instrument_id="ν.1/2020", instrument_key="N1/2020",
