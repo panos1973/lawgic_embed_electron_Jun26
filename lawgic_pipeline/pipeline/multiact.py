@@ -62,6 +62,9 @@ _ISSUERS = [
 _ISSUER_WINDOW = 1500
 # ΠΕΡΙΕΧΟΜΕΝΑ index block — dropped from each act (kept only for amendment mining).
 _TOC = re.compile(r"ΠΕΡΙΕΧΟΜΕΝΑ", re.IGNORECASE)
+# Markers that a text really is a decision gazette (vs a stray "Αριθμ." reference
+# in loose body text): the "ΑΠΟΦΑΣΕΙΣ" section header or a ΠΕΡΙΕΧΟΜΕΝΑ index.
+_DECISION_GAZETTE = re.compile(r"ΑΠΟΦΑΣΕΙΣ|ΠΕΡΙΕΧΟΜΕΝΑ")
 
 
 @dataclass
@@ -131,6 +134,20 @@ def split_acts(text: str, masthead: dict) -> list[ActSegment]:
     if acts:
         return acts
 
-    # No identifiable act header (e.g. masthead type None and no issuer): nothing
-    # to split — return empty so the caller routes the document to review.
+    # Single-act fallback: a decision gazette with valid FEK coordinates and a real
+    # "ΑΠΟΦΑΣΕΙΣ"/ΠΕΡΙΕΧΟΜΕΝΑ structure, but whose lone act header couldn't be
+    # classified (e.g. a regulatory Authority whose issuer phrasing we don't list,
+    # and no "(n)" index), is still ONE instrument. Emit the whole text as one
+    # decision rather than dropping the entire gazette to review; the caller forms
+    # the id from the gazette coordinates (Β΄<φύλλο>/<έτος>). A bare stray "Αριθμ."
+    # in loose text has no such gazette structure and still falls through to review.
+    mh = masthead or {}
+    if (_DECISION_GAZETTE.search(text)
+            and mh.get("fek_series") and mh.get("fek_number") and mh.get("year")):
+        return [ActSegment(instrument_type=mtype or TYPE_KANAP, number="", item=None,
+                           issuer="", title=mh.get("title", ""), text=text,
+                           is_decision=True)]
+
+    # No identifiable act structure at all: nothing to split — return empty so the
+    # caller routes the document to review.
     return []

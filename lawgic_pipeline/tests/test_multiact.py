@@ -91,7 +91,25 @@ def test_indexed_unclassified_kept_as_generic():
     assert acts[0].instrument_type == TYPE_KANAP    # indexed but unclassified
 
 
+def test_unclassified_decision_gazette_single_act_fallback():
+    # A real decision gazette (ΑΠΟΦΑΣΕΙΣ section, valid coords) whose lone act header
+    # has no recognised issuer and no "(n)" index — e.g. a regulatory Authority whose
+    # phrasing isn't listed, or an issuer beyond the scan window — is still ONE
+    # instrument, not review. (FEK B 302pages -> Β΄4193/2025 'Αριθμ. Ε-142/2025'.)
+    txt = ("ΑΠΟΦΑΣΕΙΣ\nΑριθμ. Ε-142/2025\n"
+           "Τροποποίηση του Κανονισμού Λειτουργίας της Αγοράς Επόμενης Ημέρας.\n"
+           "Άρθρο 1\nΑντικείμενο\nΟ παρών Κανονισμός ρυθμίζει τη λειτουργία της αγοράς.\n")
+    acts = split_acts(txt, {"instrument_type": None, "fek_series": "Β",
+                            "fek_number": "4193", "year": 2025})
+    assert len(acts) == 1
+    assert acts[0].is_decision is True
+    assert acts[0].instrument_type == TYPE_KANAP   # generic decision when unclassified
+    assert acts[0].text == txt                     # whole gazette is the one instrument
+
+
 def test_stray_arithm_without_index_or_issuer_skipped():
+    # No ΑΠΟΦΑΣΕΙΣ/ΠΕΡΙΕΧΟΜΕΝΑ gazette structure -> a bare "Αριθμ." in loose text is a
+    # stray reference, not an act: stays unsplit (review), even with valid coords.
     acts = split_acts("κείμενο\nΑριθμ. 123\nχωρίς εκδότη ή δείκτη\n",
                       {"instrument_type": None, "fek_series": "Β",
                        "fek_number": "1", "year": 2025})
