@@ -37,8 +37,10 @@ import pipeline.segment as segment
 import pipeline.enrich as enrich
 import pipeline.amend as amend
 import pipeline.delegate as delegate
+import pipeline.multiact as multiact
 import pipeline.refs as refs
-from models import Law, make_instrument_id, make_instrument_key
+from models import (Law, make_instrument_id, make_instrument_key,
+                    make_decision_id, make_decision_key)
 
 # A provision body shorter than this is suspicious (segmentation likely split on a
 # false anchor — e.g. the word "Άρθρο" inside a sentence).
@@ -139,11 +141,101 @@ def validate_pdf(path: str, use_azure: bool = True) -> dict:
     return rec
 
 
+def _law_from_act(seg: "multiact.ActSegment", mh: dict):
+    """Build an identified Law from a multiact segment + gazette masthead.
+
+    Mirror of orchestrator._build_law, kept here so the harness stays free of the
+    Weaviate/Voyage import chain. Returns None when no stable canonical id can be
+    formed (the act then routes to review rather than getting a colliding id).
+    """
+    year = mh.get("year")
+    if seg.is_decision:
+        series, fek_no = mh.get("fek_series") or "", mh.get("fek_number") or ""
+        if not (series and fek_no and year and seg.instrument_type):
+            return None
+        iid, ikey = (make_decision_id(series, fek_no, year, seg.item),
+                     make_decision_key(series, fek_no, year, seg.item))
+    else:
+        itype, number = seg.instrument_type, mh.get("number")
+        if not itype or number is None or year is None:
+            return None
+        iid, ikey = (make_instrument_id(itype, number, year),
+                     make_instrument_key(itype, number, year))
+    return Law(instrument_id=iid, instrument_key=ikey,
+               instrument_type=seg.instrument_type,
+               title=seg.title or mh.get("title", ""),
+               fek_series=mh.get("fek_series", ""), fek_number=mh.get("fek_number", ""),
+               fek_date=mh.get("fek_date") or "")
+
+
+def _validate_act(seg: "multiact.ActSegment", mh: dict, warnings: list[str]) -> dict:
+    """Run the offline spine on one split-out instrument and return its report."""
+    rec = {"instrument_type": seg.instrument_type, "issuer": seg.issuer,
+           "act_number": seg.number, "act_item": seg.item}
+    law = _law_from_act(seg, mh)
+    if law is None:
+        rec.update(status="review", instrument_id=None, provisions=0, annexes=0,
+                   amendments=0, flags=["masthead_unidentified"])
+        return rec
+    law = segment.segment(seg.text, law)
+    law = amend.extract_amendments(law)
+    law = amend.consolidate(law)
+    law = delegate.extract_delegations(law, full_text=seg.text)
+    law = refs.extract_external_refs(law)
+    law = enrich.classify_domain(law)
+    arts = [p for p in law.provisions if p.chunk_type == "article"]
+    annexes = [p for p in law.provisions if p.chunk_type == "annex"]
+    rec.update(
+        status="ok", instrument_id=law.instrument_id,
+        title=(law.title or "")[:120],
+        provisions=len(arts), annexes=len(annexes),
+        amendments=len(law.amendments),
+        resolved_amendments=sum(1 for op in law.amendments if op.resolved),
+        delegations=len(law.delegations),
+        domains=sorted({d for p in arts for d in p.legal_domain}),
+        flags=_quality_flags(law, warnings, True))
+    return rec
+
+
+def validate_pdf_multiact(path: str, use_azure: bool = True) -> list[dict]:
+    """Split one gazette into the instruments it contains (exactly as the
+    orchestrator does via multiact) and validate EACH — returns one record per act.
+
+    FEK Β issues bundle N decisions (ΚΥΑ/ΥΑ/…) split on `Αριθμ.` headers; the
+    single-instrument validate_pdf path can't identify the gazette as one
+    instrument, so those PDFs always land in review there. This surfaces the Β
+    coverage the orchestrator actually has.
+    """
+    base = {"file": os.path.basename(path)}
+    try:
+        ex = extract.extract_pdf(path, use_azure=use_azure)
+    except Exception as e:  # noqa: BLE001
+        return [{**base, "status": "extract_error", "error": f"{type(e).__name__}: {e}"}]
+
+    mh = ex.masthead or {}
+    acts = multiact.split_acts(normalize_display(ex.text), mh)
+    if not acts:
+        return [{**base, "status": "review", "classification": ex.classification,
+                 "instrument_id": None, "acts": 0, "provisions": 0, "annexes": 0,
+                 "amendments": 0,
+                 "flags": _quality_flags(Law("", "", ""), ex.warnings, False)}]
+
+    recs = []
+    for seg in acts:
+        rec = _validate_act(seg, mh, ex.warnings)
+        rec.update(base, classification=ex.classification, acts=len(acts))
+        recs.append(rec)
+    return recs
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Offline FEK extraction accuracy harness")
     ap.add_argument("folder")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--no-azure", action="store_true")
+    ap.add_argument("--multiact", action="store_true",
+                    help="split each gazette into its instruments (ΚΥΑ/ΥΑ/…) like "
+                         "the orchestrator and validate each — surfaces FEK Β coverage")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
 
@@ -153,27 +245,32 @@ def main() -> int:
 
     reports = []
     for path in pdfs:
-        rec = validate_pdf(path, use_azure=not args.no_azure)
-        reports.append(rec)
-        if args.json:
-            sys.stdout.write(json.dumps(rec, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
-        else:
-            _print_human(rec)
+        recs = (validate_pdf_multiact(path, use_azure=not args.no_azure)
+                if args.multiact else [validate_pdf(path, use_azure=not args.no_azure)])
+        for rec in recs:
+            reports.append(rec)
+            if args.json:
+                sys.stdout.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                sys.stdout.flush()
+            else:
+                _print_human(rec)
 
     n = len(reports)
+    files = len({r.get("file") for r in reports})
     identified = sum(1 for r in reports if r.get("status") in ("ok",))
     flagged = sum(1 for r in reports if r.get("flags"))
     errored = sum(1 for r in reports if r.get("status") == "extract_error")
     total_prov = sum(r.get("provisions", 0) for r in reports)
-    summary = {"type": "summary", "documents": n, "identified": identified,
-               "review": n - identified - errored, "extract_errors": errored,
-               "flagged": flagged, "total_provisions": total_prov}
+    summary = {"type": "summary", "documents": files, "instruments": n,
+               "identified": identified, "review": n - identified - errored,
+               "extract_errors": errored, "flagged": flagged,
+               "total_provisions": total_prov}
     if args.json:
         sys.stdout.write(json.dumps(summary, ensure_ascii=False) + "\n")
     else:
+        unit = f"{files} documents, {n} instruments" if args.multiact else f"{n} documents"
         print(f"\n{'='*60}")
-        print(f"{n} documents | identified={identified} review={summary['review']} "
+        print(f"{unit} | identified={identified} review={summary['review']} "
               f"extract_errors={errored} | flagged={flagged} | "
               f"provisions={total_prov}")
 

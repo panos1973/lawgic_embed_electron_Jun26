@@ -9,7 +9,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import weaviate_io as wio  # noqa: E402  (conftest stubs the weaviate SDK)
-from models import Law, Provision, AmendmentOp, TYPE_NOMOS  # noqa: E402
+from models import (Law, Provision, AmendmentOp, DelegationEdge,  # noqa: E402
+                    TYPE_NOMOS)
 
 
 class _FakeData:
@@ -278,17 +279,29 @@ def test_loader_props_are_declared_in_schema():
         if name:
             declared[name] = props
 
-    # build a representative law and capture what each loader actually writes
+    # build a representative law and capture what each loader actually writes.
+    # The amendment op carries source_id + effective_date so the optional scalar
+    # props (source_*/effective_date) are exercised too.
     law = Law(instrument_id="ν.5090/2024", instrument_key="N5090/2024",
               instrument_type=TYPE_NOMOS, title="Δοκιμή", fek_date="2024-03-26")
     segment.segment("Άρθρο 1\nΟι διατάξεις τροποποιούνται.\n", law)
     c = _FakeClient()
     wio.load_law(c, law, [[0.0] * 4])
     wio.load_document(c, law)
+    wio.load_amendments(c, [AmendmentOp(
+        op="replaces", target_id="ν.4675/2024#αρ.24.παρ.2", scope="paragraph",
+        new_text="νέο", resolved=True, sub_edit_ordinal="1",
+        source_id="ν.5090/2024#αρ.3", effective_date="2025-01-01")], source_law=law)
+    wio.load_delegations(c, [DelegationEdge(
+        enabling_id="ν.4412/2016#αρ.5", implementing_id="Β΄913/2025#1",
+        enabling_law_number="4412/2016", enabling_article_number="5",
+        delegated_authority="Υπουργός", delegation_scope="σκοπός")], source_law=law)
 
     pairs = [(config.FLAT_COLLECTION, c.sink["Jun2026GRLegaDocs"][0]["props"]),
              (config.GRAPH_ARTICLE, c.sink["Jun2026LawArticle"][0]["props"]),
-             (config.GRAPH_DOCUMENT, c.sink["Jun2026LawDocument"][0]["props"])]
+             (config.GRAPH_DOCUMENT, c.sink["Jun2026LawDocument"][0]["props"]),
+             (config.GRAPH_AMENDMENT, c.sink["Jun2026Amendment"][0]["props"]),
+             (config.GRAPH_DELEGATION, c.sink["Jun2026Delegation"][0]["props"])]
     for coll, written in pairs:
         undeclared = set(written) - declared.get(coll, set())
         assert not undeclared, f"{coll}: loader writes undeclared props {undeclared}"
@@ -469,6 +482,93 @@ def test_timeline_repeal_marks_terminal(monkeypatch):
     rep = c.store["Jun2026LawArticle"][
         wio._art_version_uuid("ν.4412/2016#αρ.15", "2025-01-01T00:00:00Z")]
     assert rep["legal_force_status"] == "repealed"
+
+
+# --- Browse inspectors: list_laws + fetch_law_objects -----------------------
+class _InspectObj:
+    def __init__(self, props, uuid): self.properties = props; self.uuid = uuid
+
+
+class _InspectColl:
+    def __init__(self, rows): self._rows = rows
+
+    @property
+    def tenants(self):
+        return type("T", (), {"get": lambda s: {"gr": object()}})()
+
+    def with_tenant(self, t): return self
+
+    def iterator(self, return_properties=None):
+        for d in self._rows:
+            yield _InspectObj(d, d.get("canonical_id", "u"))
+
+    @property
+    def query(self):
+        rows = self._rows
+
+        class Q:  # the stub Filter is opaque, so return the preset rows (the test
+            def fetch_objects(self_, filters=None, limit=2000):   # sets up only the law's rows)
+                return type("R", (), {"objects":
+                    [_InspectObj(d, d.get("canonical_id", "u")) for d in rows[:limit]]})()
+        return Q()
+
+
+class _InspectClient:
+    def __init__(self, store): self._store = store
+
+    @property
+    def collections(self):
+        store = self._store
+
+        class C:
+            def exists(s, name): return name in store
+            def use(s, name): return _InspectColl(store.get(name, []))
+        return C()
+
+
+def test_list_laws_dedups_counts_and_sorts():
+    flat = [
+        {"law_number": "5090/2024", "instrument_key": "N5090/2024",
+         "document_title": "Νόμος Α", "canonical_id": "ν.5090/2024#αρ.1"},
+        {"law_number": "5090/2024", "instrument_key": "N5090/2024",
+         "document_title": "Νόμος Α", "canonical_id": "ν.5090/2024#αρ.2"},
+        {"law_number": "4675/2024", "instrument_key": "N4675/2024",
+         "document_title": "Νόμος Β", "canonical_id": "ν.4675/2024#αρ.1"},
+        {"law_number": "", "canonical_id": "x"},          # blank -> skipped
+    ]
+    c = _InspectClient({wio.config.FLAT_COLLECTION: flat})
+    laws = wio.list_laws(c, tenant="gr")
+    assert [r["law_number"] for r in laws] == ["4675/2024", "5090/2024"]   # sorted
+    by = {r["law_number"]: r for r in laws}
+    assert by["5090/2024"]["chunks"] == 2
+    assert by["5090/2024"]["instrument_key"] == "N5090/2024"
+    assert by["4675/2024"]["document_title"] == "Νόμος Β"
+
+
+def test_fetch_law_objects_sorts_by_chunk_index_and_tags_uuid():
+    rows = [
+        {"canonical_id": "ν.5090/2024#αρ.2", "article_number": "2",
+         "chunk_index": 1, "law_number": "5090/2024"},
+        {"canonical_id": "ν.5090/2024#αρ.1", "article_number": "1",
+         "chunk_index": 0, "law_number": "5090/2024"},
+    ]
+    c = _InspectClient({wio.config.FLAT_COLLECTION: rows})
+    objs = wio.fetch_law_objects(c, wio.config.FLAT_COLLECTION, "5090/2024", tenant="gr")
+    assert [o["chunk_index"] for o in objs] == [0, 1]      # sorted ascending
+    assert all("_uuid" in o for o in objs)
+
+
+def test_fetch_law_objects_absent_collection_returns_empty():
+    assert wio.fetch_law_objects(_InspectClient({}), wio.config.FLAT_COLLECTION,
+                                 "5090/2024", tenant="gr") == []
+
+
+def test_law_fields_mapping_covers_all_collections():
+    assert wio._law_fields(wio.config.GRAPH_ARTICLE) == ["document_law_number"]
+    assert set(wio._law_fields(wio.config.GRAPH_AMENDMENT)) == {
+        "source_law_number", "target_law_number"}
+    assert set(wio._law_fields(wio.config.GRAPH_DELEGATION)) == {
+        "enabling_law_number", "implementing_law_number"}
 
 
 if __name__ == "__main__":

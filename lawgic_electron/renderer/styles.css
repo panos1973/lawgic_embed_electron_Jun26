@@ -184,3 +184,19 @@ select:focus { outline: none; border-color: var(--accent); }
 label.check { flex-direction: row; align-items: center; gap: 10px; text-transform: none;
   letter-spacing: 0; color: var(--muted); }
 label.check input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* browse: inspect embedded chunks */
+label.inline { flex-direction: row; align-items: center; gap: 8px; text-transform: none;
+  letter-spacing: 0; color: var(--muted); }
+label.inline input, label.inline select { min-width: 220px; }
+.browse-results { display: flex; flex-direction: column; gap: 10px; max-height: 56vh; overflow: auto; }
+.browse-head { color: var(--muted); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+.chunk-card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2);
+  padding: 10px 12px; animation: rise .25s ease both; }
+.chunk-id { color: var(--accent-2); font-weight: 700; word-break: break-all; }
+.chunk-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0; }
+.chunk-meta .kv { color: var(--text); font-size: 11px; }
+.chunk-meta .kv i { color: var(--muted); font-style: normal; margin-right: 4px; }
+.chunk-text { white-space: pre-wrap; word-break: break-word; background: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-top: 6px;
+  font-size: 12px; line-height: 1.5; max-height: 280px; overflow: auto; }

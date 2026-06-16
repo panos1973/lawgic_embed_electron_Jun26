@@ -30,6 +30,7 @@
   <nav class="tabs">
     <button class="tab active" data-tab="ingest">Ingest</button>
     <button class="tab" data-tab="review">Review<span class="badge" id="reviewBadge"></span></button>
+    <button class="tab" data-tab="browse">Browse</button>
     <button class="tab" data-tab="settings">Settings</button>
   </nav>
 
@@ -77,6 +78,39 @@
           <thead><tr><th>Document</th><th>Stage</th><th>Reason</th></tr></thead>
           <tbody id="reviewBody"><tr><td colspan="3" class="empty">— nothing loaded —</td></tr></tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- BROWSE -->
+    <section id="browse" class="view">
+      <div class="panel">
+        <div class="row">
+          <label class="inline">Collection
+            <select id="browseCollection">
+              <option value="flat">flat — embedded chunks</option>
+              <option value="article">article — versioned</option>
+              <option value="document">document — node</option>
+              <option value="amendment">amendment — edges</option>
+              <option value="delegation">delegation — edges</option>
+            </select>
+          </label>
+          <label class="inline">Law number
+            <input id="browseLaw" list="lawOptions" placeholder="e.g. 5086/2024" />
+            <datalist id="lawOptions"></datalist>
+          </label>
+          <button class="btn" id="refreshLaws">Refresh laws</button>
+          <button class="btn primary" id="loadChunks">Load</button>
+        </div>
+        <p class="hint">Inspect exactly what was embedded for one law. Use “Copy” to
+          share the chunks here for review &amp; amendments.</p>
+        <div class="row">
+          <button class="btn ghost" id="copyJson" disabled>Copy as JSON</button>
+          <button class="btn ghost" id="copyMd" disabled>Copy as Markdown</button>
+          <span class="saved" id="browseNote"></span>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="browse-results" id="browseResults"><div class="empty">— nothing loaded —</div></div>
       </div>
     </section>
 

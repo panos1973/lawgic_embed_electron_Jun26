@@ -53,6 +53,26 @@ def _weaviate_stub() -> types.ModuleType:
     classes.tenants = tenants
     sys.modules["weaviate.classes"] = classes
     sys.modules["weaviate.classes.tenants"] = tenants
+
+    # query.Filter stub — enough for fetch_law_objects to build a filter offline
+    # (the fake clients in tests ignore the filter object and return preset rows).
+    query = types.ModuleType("weaviate.classes.query")
+
+    class _Cond:
+        def equal(self, v):
+            return self
+
+        def __or__(self, other):
+            return self
+
+    class _Filter:
+        @staticmethod
+        def by_property(name):
+            return _Cond()
+
+    query.Filter = _Filter
+    classes.query = query
+    sys.modules["weaviate.classes.query"] = query
     return m
 
 

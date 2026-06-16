@@ -67,6 +67,83 @@ def collection_count(client, name: str, tenant: str = None) -> int:
     return int(res.total_count or 0)
 
 
+# ── read-only inspectors (the app's Browse view: "show me this law's chunks") ──
+def _law_fields(name: str) -> list[str]:
+    """The scalar prop(s) that carry the law number, per collection."""
+    return {
+        config.FLAT_COLLECTION: ["law_number"],
+        config.GRAPH_DOCUMENT: ["law_number"],
+        config.GRAPH_ARTICLE: ["document_law_number"],
+        config.GRAPH_AMENDMENT: ["source_law_number", "target_law_number"],
+        config.GRAPH_DELEGATION: ["enabling_law_number", "implementing_law_number"],
+    }.get(name, ["law_number"])
+
+
+def _inspect_sort_key(d: dict):
+    ci = d.get("chunk_index")
+    if isinstance(ci, int):
+        return (0, ci, "")
+    m = re.match(r"(\d+)", str(d.get("article_number") or ""))
+    return (1, int(m.group(1)) if m else 0, str(d.get("canonical_id") or ""))
+
+
+def list_laws(client, tenant: str = None) -> list[dict]:
+    """Distinct laws present in the flat collection — the Browse picker source.
+
+    Returns [{law_number, instrument_key, document_title, chunks}] sorted by law.
+    Read-only.
+    """
+    tenant = tenant or config.DEFAULT_TENANT
+    name = config.FLAT_COLLECTION
+    if not client.collections.exists(name):
+        return []
+    coll = client.collections.use(name)
+    if tenant not in set(coll.tenants.get().keys()):
+        return []
+    seen: dict[str, dict] = {}
+    for obj in coll.with_tenant(tenant).iterator(
+            return_properties=["law_number", "instrument_key", "document_title"]):
+        p = obj.properties or {}
+        ln = p.get("law_number") or ""
+        if not ln:
+            continue
+        rec = seen.setdefault(ln, {"law_number": ln, "instrument_key": "",
+                                   "document_title": "", "chunks": 0})
+        rec["chunks"] += 1
+        rec["instrument_key"] = rec["instrument_key"] or (p.get("instrument_key") or "")
+        rec["document_title"] = rec["document_title"] or (p.get("document_title") or "")
+    return sorted(seen.values(), key=lambda r: r["law_number"])
+
+
+def fetch_law_objects(client, name: str, law_number: str, tenant: str = None,
+                      limit: int = 2000) -> list[dict]:
+    """Every object in collection `name` for `law_number` — the Browse inspector.
+
+    Matches the collection's law-number field(s) (OR-combined for the edge
+    collections), returns plain property dicts (+ _uuid), sorted by chunk_index /
+    article number. Read-only.
+    """
+    from weaviate.classes.query import Filter
+    tenant = tenant or config.DEFAULT_TENANT
+    if not client.collections.exists(name):
+        return []
+    coll = client.collections.use(name)
+    if tenant not in set(coll.tenants.get().keys()):
+        return []
+    flt = None
+    for f in _law_fields(name):
+        cond = Filter.by_property(f).equal(law_number)
+        flt = cond if flt is None else (flt | cond)
+    res = coll.with_tenant(tenant).query.fetch_objects(filters=flt, limit=limit)
+    out = []
+    for o in res.objects:
+        d = dict(o.properties or {})
+        d["_uuid"] = str(o.uuid)
+        out.append(d)
+    out.sort(key=_inspect_sort_key)
+    return out
+
+
 def reset_collection(client, name: str, tenant: str = None) -> dict:
     """Wipe all objects of one collection for `tenant`, KEEPING the schema.
 
