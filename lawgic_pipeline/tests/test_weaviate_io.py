@@ -484,6 +484,93 @@ def test_timeline_repeal_marks_terminal(monkeypatch):
     assert rep["legal_force_status"] == "repealed"
 
 
+# --- Browse inspectors: list_laws + fetch_law_objects -----------------------
+class _InspectObj:
+    def __init__(self, props, uuid): self.properties = props; self.uuid = uuid
+
+
+class _InspectColl:
+    def __init__(self, rows): self._rows = rows
+
+    @property
+    def tenants(self):
+        return type("T", (), {"get": lambda s: {"gr": object()}})()
+
+    def with_tenant(self, t): return self
+
+    def iterator(self, return_properties=None):
+        for d in self._rows:
+            yield _InspectObj(d, d.get("canonical_id", "u"))
+
+    @property
+    def query(self):
+        rows = self._rows
+
+        class Q:  # the stub Filter is opaque, so return the preset rows (the test
+            def fetch_objects(self_, filters=None, limit=2000):   # sets up only the law's rows)
+                return type("R", (), {"objects":
+                    [_InspectObj(d, d.get("canonical_id", "u")) for d in rows[:limit]]})()
+        return Q()
+
+
+class _InspectClient:
+    def __init__(self, store): self._store = store
+
+    @property
+    def collections(self):
+        store = self._store
+
+        class C:
+            def exists(s, name): return name in store
+            def use(s, name): return _InspectColl(store.get(name, []))
+        return C()
+
+
+def test_list_laws_dedups_counts_and_sorts():
+    flat = [
+        {"law_number": "5090/2024", "instrument_key": "N5090/2024",
+         "document_title": "Νόμος Α", "canonical_id": "ν.5090/2024#αρ.1"},
+        {"law_number": "5090/2024", "instrument_key": "N5090/2024",
+         "document_title": "Νόμος Α", "canonical_id": "ν.5090/2024#αρ.2"},
+        {"law_number": "4675/2024", "instrument_key": "N4675/2024",
+         "document_title": "Νόμος Β", "canonical_id": "ν.4675/2024#αρ.1"},
+        {"law_number": "", "canonical_id": "x"},          # blank -> skipped
+    ]
+    c = _InspectClient({wio.config.FLAT_COLLECTION: flat})
+    laws = wio.list_laws(c, tenant="gr")
+    assert [r["law_number"] for r in laws] == ["4675/2024", "5090/2024"]   # sorted
+    by = {r["law_number"]: r for r in laws}
+    assert by["5090/2024"]["chunks"] == 2
+    assert by["5090/2024"]["instrument_key"] == "N5090/2024"
+    assert by["4675/2024"]["document_title"] == "Νόμος Β"
+
+
+def test_fetch_law_objects_sorts_by_chunk_index_and_tags_uuid():
+    rows = [
+        {"canonical_id": "ν.5090/2024#αρ.2", "article_number": "2",
+         "chunk_index": 1, "law_number": "5090/2024"},
+        {"canonical_id": "ν.5090/2024#αρ.1", "article_number": "1",
+         "chunk_index": 0, "law_number": "5090/2024"},
+    ]
+    c = _InspectClient({wio.config.FLAT_COLLECTION: rows})
+    objs = wio.fetch_law_objects(c, wio.config.FLAT_COLLECTION, "5090/2024", tenant="gr")
+    assert [o["chunk_index"] for o in objs] == [0, 1]      # sorted ascending
+    assert all("_uuid" in o for o in objs)
+
+
+def test_fetch_law_objects_absent_collection_returns_empty():
+    assert wio.fetch_law_objects(_InspectClient({}), wio.config.FLAT_COLLECTION,
+                                 "5090/2024", tenant="gr") == []
+
+
+def test_law_fields_mapping_covers_all_collections():
+    assert wio._law_fields(wio.config.GRAPH_ARTICLE) == ["document_law_number"]
+    assert set(wio._law_fields(wio.config.GRAPH_AMENDMENT)) == {
+        "source_law_number", "target_law_number"}
+    assert set(wio._law_fields(wio.config.GRAPH_DELEGATION)) == {
+        "enabling_law_number", "implementing_law_number"}
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

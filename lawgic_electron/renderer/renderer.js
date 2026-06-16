@@ -1,6 +1,7 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const counts = { pending: 0, processing: 0, done: 0, review: 0, error: 0 };
 let folder = null;
 
@@ -12,6 +13,7 @@ document.querySelectorAll('.tab').forEach((t) => {
     t.classList.add('active');
     $(t.dataset.tab).classList.add('active');
     if (t.dataset.tab === 'review') loadReview();
+    if (t.dataset.tab === 'browse') loadLaws();
     if (t.dataset.tab === 'settings') { loadSettings(); loadCollections(); }
   });
 });
@@ -212,6 +214,93 @@ $('resetAllCollections').addEventListener('click', async () => {
   setTimeout(() => ($('resetNote').textContent = ''), 4000);
   loadCollections();
 });
+
+// ---- browse (inspect what was embedded for one law) ----
+let lastInspect = null;   // { collection, law, objects }
+const _TEXT_FIELDS = ['chunk_text', 'new_text', 'change_description', 'delegation_scope'];
+const _META_FIELDS = ['canonical_id', 'article_number', 'article_title', 'hierarchy_path',
+  'version', 'is_current', 'valid_from', 'valid_to', 'legal_force_status', 'chunk_index',
+  'total_chunks', 'context_window_id', 'legal_domain', 'action', 'scope',
+  'target_law_number', 'target_article_number', 'enabling_law_number', 'implementing_law_number'];
+
+async function loadLaws() {
+  const r = await window.api.listLaws();
+  const laws = (r && r.laws) || [];
+  $('lawOptions').innerHTML = laws.map((l) =>
+    `<option value="${esc(l.law_number)}">${esc(l.instrument_key || '')} · ` +
+    `${esc((l.document_title || '').slice(0, 60))} · ${l.chunks} chunks</option>`).join('');
+  $('browseNote').textContent = r && r.error ? `error: ${esc(r.error)}`
+    : (laws.length ? `${laws.length} law(s) embedded` : 'no laws embedded yet — run an ingest first');
+  setTimeout(() => ($('browseNote').textContent = ''), 4000);
+}
+
+async function loadChunks() {
+  const collection = $('browseCollection').value;
+  const law = $('browseLaw').value.trim();
+  if (!law) { $('browseNote').textContent = 'enter a law number'; return; }
+  $('browseResults').innerHTML = '<div class="empty">loading…</div>';
+  $('copyJson').disabled = $('copyMd').disabled = true;
+  const r = await window.api.inspectLaw(collection, law);
+  if (!r || r.error) {
+    $('browseResults').innerHTML = `<div class="empty">error: ${esc((r && r.error) || 'failed')}</div>`;
+    return;
+  }
+  lastInspect = { collection, law, objects: r.objects || [] };
+  renderBrowse(lastInspect);
+  const has = lastInspect.objects.length > 0;
+  $('copyJson').disabled = $('copyMd').disabled = !has;
+}
+
+function renderBrowse({ collection, law, objects }) {
+  const box = $('browseResults');
+  if (!objects.length) {
+    box.innerHTML = `<div class="empty">no objects for ${esc(law)} in ${esc(collection)}</div>`;
+    return;
+  }
+  const head = `<div class="browse-head">${esc(collection)} · ${esc(law)} · <b>${objects.length}</b> object(s)</div>`;
+  const cards = objects.map((o) => {
+    const id = o.canonical_id || o._uuid || '';
+    const meta = _META_FIELDS
+      .filter((f) => o[f] !== undefined && o[f] !== '' && o[f] !== null)
+      .map((f) => `<span class="kv"><i>${f}</i>${esc(Array.isArray(o[f]) ? o[f].join(', ') : o[f])}</span>`)
+      .join('');
+    const text = _TEXT_FIELDS.map((f) => o[f] ? `<pre class="chunk-text">${esc(o[f])}</pre>` : '').join('');
+    return `<div class="chunk-card"><div class="chunk-id">${esc(id)}</div>` +
+           `<div class="chunk-meta">${meta}</div>${text}</div>`;
+  }).join('');
+  box.innerHTML = head + cards;
+}
+
+function toMarkdown({ collection, law, objects }) {
+  let md = `# ${collection} — law ${law} (${objects.length} object(s))\n\n`;
+  for (const o of objects) {
+    md += `## ${o.canonical_id || o._uuid || ''}\n`;
+    const meta = _META_FIELDS
+      .filter((f) => o[f] !== undefined && o[f] !== '' && o[f] !== null)
+      .map((f) => `- **${f}**: ${Array.isArray(o[f]) ? o[f].join(', ') : o[f]}`);
+    if (meta.length) md += meta.join('\n') + '\n';
+    for (const f of _TEXT_FIELDS) if (o[f]) md += `\n\`\`\`\n${o[f]}\n\`\`\`\n`;
+    md += '\n';
+  }
+  return md;
+}
+
+async function copyText(text, label) {
+  try { await navigator.clipboard.writeText(text); $('browseNote').textContent = `copied ${label} ✓`; }
+  catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); $('browseNote').textContent = `copied ${label} ✓`; }
+    catch (e) { $('browseNote').textContent = 'copy failed'; }
+    document.body.removeChild(ta);
+  }
+  setTimeout(() => ($('browseNote').textContent = ''), 3000);
+}
+
+$('refreshLaws').addEventListener('click', loadLaws);
+$('loadChunks').addEventListener('click', loadChunks);
+$('copyJson').addEventListener('click', () => lastInspect && copyText(JSON.stringify(lastInspect.objects, null, 2), 'JSON'));
+$('copyMd').addEventListener('click', () => lastInspect && copyText(toMarkdown(lastInspect), 'Markdown'));
 
 // ---- app version ----
 async function showVersion() {

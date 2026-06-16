@@ -277,6 +277,46 @@ def cmd_retry():
         client.close(); st.close()
 
 
+def cmd_laws():
+    """List the laws embedded in the flat collection (Browse picker source)."""
+    import weaviate_io as wio
+    client = wio.connect()
+    try:
+        laws = wio.list_laws(client)
+        emit({"type": "laws", "laws": laws})
+        if not JSON:
+            print(f"{len(laws)} law(s) embedded:")
+            for r in laws:
+                print(f"  {r['law_number']:<14} {r.get('instrument_key',''):<14} "
+                      f"chunks={r['chunks']:<4} {r.get('document_title','')[:50]}")
+    finally:
+        client.close()
+
+
+def cmd_inspect(collection: str, law: str):
+    """Dump every object embedded for one law in one collection (Browse view)."""
+    import weaviate_io as wio
+    reg = wio.collection_registry()
+    if collection not in reg:
+        emit({"type": "inspect", "error": f"unknown collection '{collection}'"})
+        if not JSON:
+            print(f"Unknown collection '{collection}'. Known: {', '.join(reg)}")
+        return
+    client = wio.connect()
+    try:
+        objs = wio.fetch_law_objects(client, reg[collection], law)
+        emit({"type": "inspect", "collection": collection, "law": law,
+              "count": len(objs), "objects": objs})
+        if not JSON:
+            print(f"{collection} / {law}: {len(objs)} object(s)")
+            for o in objs:
+                print(f"  {o.get('canonical_id') or o.get('_uuid')}  "
+                      f"art={o.get('article_number','')}  v={o.get('version','')}  "
+                      f"current={o.get('is_current','')}")
+    finally:
+        client.close()
+
+
 def main():
     global JSON
     argv = sys.argv[1:]
@@ -292,6 +332,10 @@ def main():
     sub.add_parser("consolidate")              # build versioned amendment timeline
     sub.add_parser("graph-status")             # amendment-graph QA / dangling report
     sub.add_parser("collections")              # list collections + counts
+    sub.add_parser("laws")                     # list embedded laws (Browse picker)
+    ip = sub.add_parser("inspect")             # dump one law's objects in a collection
+    ip.add_argument("--collection", required=True)
+    ip.add_argument("--law", required=True)
     sub.add_parser("reset-state")              # clear local ingest history
     rp = sub.add_parser("reset")               # wipe a collection (keep schema)
     rp.add_argument("target", help="collection key (flat|document|article|"
@@ -304,6 +348,8 @@ def main():
      "consolidate": cmd_consolidate,
      "graph-status": cmd_graph_status,
      "collections": cmd_collections,
+     "laws": cmd_laws,
+     "inspect": lambda: cmd_inspect(args.collection, args.law),
      "reset-state": cmd_reset_state,
      "reset": lambda: cmd_reset(args.target)}[args.cmd]()
 

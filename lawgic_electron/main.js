@@ -154,6 +154,9 @@ function registerIpc(win) {
   ipcMain.handle('state:reset', () => runOneShot(['reset-state'], 'reset_state'));
   ipcMain.handle('collections:list', () => runOneShot(['collections'], 'collections'));
   ipcMain.handle('collections:reset', (_e, key) => runOneShot(['reset', key], 'reset'));
+  ipcMain.handle('laws:list', () => runOneShot(['laws'], 'laws'));
+  ipcMain.handle('law:inspect', (_e, { collection, law }) =>
+    runOneShot(['inspect', '--collection', collection, '--law', law], 'inspect'));
   ipcMain.handle('settings:get', () => {
     const s = loadSettings();
     return Object.assign(s, { encryptionAvailable: safeStorage.isEncryptionAvailable() });

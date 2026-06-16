@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('api', {
   resetState: () => ipcRenderer.invoke('state:reset'),
   listCollections: () => ipcRenderer.invoke('collections:list'),
   resetCollection: (key) => ipcRenderer.invoke('collections:reset', key),
+  listLaws: () => ipcRenderer.invoke('laws:list'),
+  inspectLaw: (collection, law) => ipcRenderer.invoke('law:inspect', { collection, law }),
   onPipelineEvent: (cb) => ipcRenderer.on('pipeline:event', (_e, o) => cb(o)),
   onPipelineDone: (cb) => ipcRenderer.on('pipeline:done', (_e, o) => cb(o)),
 });
