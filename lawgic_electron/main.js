@@ -7,7 +7,7 @@ const fs = require('fs');
 
 // ---- settings (secrets encrypted at rest via OS keychain) ----
 const SETTINGS_PATH = () => path.join(app.getPath('userData'), 'settings.json');
-const SECRET_FIELDS = ['weaviateApiKey', 'voyageApiKey', 'diKey', 'anthropicKey', 'deepseekKey', 'geminiKey'];
+const SECRET_FIELDS = ['weaviateApiKey', 'voyageApiKey', 'diKey', 'anthropicKey', 'deepseekKey', 'geminiKey', 'azureOpenaiKey'];
 
 function defaults() {
   return {
@@ -24,6 +24,10 @@ function defaults() {
     weaviateUrl: 'https://dxyeak9tnm4gp8raeh1g.c0.europe-west3.gcp.weaviate.cloud',
     weaviateApiKey: '', voyageApiKey: '', diEndpoint: '', diKey: '',
     anthropicKey: '', deepseekKey: '', geminiKey: '', jurisdiction: 'gr',
+    // Azure OpenAI (gpt-4.1 / gpt-4.1-mini): endpoint is pre-filled (not a secret),
+    // key is entered by the user (encrypted at rest), model name == deployment name.
+    azureOpenaiEndpoint: 'https://copr-lawgic.openai.azure.com/',
+    azureOpenaiKey: '', azureOpenaiApiVersion: '2024-10-21',
     llmProvider: 'anthropic', llmModel: 'claude-haiku-4-5', llmThinking: false,
     amendExtractor: 'deterministic',
     stateDb: path.join(app.getPath('userData'), 'lawgic_state.db'),
@@ -63,6 +67,8 @@ function childEnv(s) {
     VOYAGE_API_KEY: s.voyageApiKey, DI_ENDPOINT: s.diEndpoint, DI_KEY: s.diKey,
     ANTHROPIC_API_KEY: s.anthropicKey, JURISDICTION: s.jurisdiction,
     DEEPSEEK_API_KEY: s.deepseekKey, GEMINI_API_KEY: s.geminiKey,
+    AZURE_OPENAI_ENDPOINT: s.azureOpenaiEndpoint, AZURE_OPENAI_KEY: s.azureOpenaiKey,
+    AZURE_OPENAI_API_VERSION: s.azureOpenaiApiVersion,
     LLM_PROVIDER: s.llmProvider, LLM_MODEL: s.llmModel,
     LLM_THINKING: s.llmThinking ? 'on' : 'off',
     AMEND_EXTRACTOR: s.amendExtractor || 'deterministic',

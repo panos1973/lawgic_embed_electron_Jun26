@@ -31,6 +31,13 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")   # Alibaba DashScope (Qwen)
 
+# Azure OpenAI (gpt-4.1 / gpt-4.1-mini) — needs endpoint + key + api-version; the
+# chosen model name is used as the Azure DEPLOYMENT name. Set via the app Settings
+# or these env vars. (Endpoint is not a secret; the key must come from env/Settings.)
+AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+AZURE_OPENAI_KEY = os.environ.get("AZURE_OPENAI_KEY", "")
+AZURE_OPENAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21")
+
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")   # anthropic|deepseek|gemini|openai|qwen
 LLM_MODEL = os.environ.get("LLM_MODEL", "")                  # blank -> provider default
 LLM_THINKING = os.environ.get("LLM_THINKING", "off").lower() in ("on", "true", "1")
@@ -58,6 +65,10 @@ PROVIDERS = {
                   # gpt-4.1 is NOT a reasoning model: no thinking to disable, JSON
                   # mode supported. Override the exact snapshot via LLM_MODEL.
                   "key": "OPENAI_API_KEY", "default_model": "gpt-4.1-2025-04-14"},
+    "azure":     {"sdk": "azure", "base_url": None,   # Azure OpenAI (endpoint + api-version)
+                  # LLM_MODEL is the Azure DEPLOYMENT name (gpt-4.1 / gpt-4.1-mini);
+                  # endpoint/key/api-version come from AZURE_OPENAI_* (or Settings).
+                  "key": "AZURE_OPENAI_KEY", "default_model": "gpt-4.1"},
     "qwen":      {"sdk": "openai",
                   # Alibaba DashScope, OpenAI-compatible (international endpoint).
                   # For the China region use dashscope.aliyuncs.com; for a
