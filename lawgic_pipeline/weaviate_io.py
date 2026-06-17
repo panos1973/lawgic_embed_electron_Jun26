@@ -172,6 +172,30 @@ def _rfc3339(date: str | None) -> str | None:
     return None
 
 
+def _vf_str(value) -> str | None:
+    """Normalize a DATE value to the EXACT RFC3339 form used at write time.
+
+    Weaviate returns DATE properties as Python datetime objects, but per-version
+    UUIDs are keyed on the write-time string ('YYYY-MM-DDT00:00:00Z'). Reading a
+    datetime back and using it raw both crashed ('datetime'.strip()) and silently
+    broke version-UUID matching (str(datetime) != the stored key). Coerce a
+    datetime OR string to the canonical string so reads round-trip exactly.
+    """
+    if not value:
+        return None
+    import datetime as _dt
+    if isinstance(value, _dt.datetime):
+        dt = value
+    else:
+        try:
+            dt = _dt.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        except ValueError:
+            return str(value).strip() or None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(_dt.timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _version_key(canonical_id: str, valid_from: str | None) -> str:
     """Stable per-version key: article identity + the date this text became valid.
     Recomputable from an amendment edge's effective_date, so version upserts and
@@ -488,9 +512,12 @@ def assemble_article_timeline(client, tenant: str = None) -> dict:
 
     by_target: dict[str, list] = {}
     for obj in amd.iterator():
-        p = obj.properties
+        p = dict(obj.properties)
+        # Weaviate returns DATE props as datetime; normalize to the write-time
+        # RFC3339 string so sort/compare work and version-UUID keys round-trip.
+        p["effective_date"] = _vf_str(p.get("effective_date"))
         tcid = (p.get("target_canonical_id") or "").strip()
-        if tcid and (p.get("effective_date") or "").strip():
+        if tcid and p.get("effective_date"):
             by_target.setdefault(tcid, []).append(p)
 
     articles = versions = pending = 0
@@ -500,7 +527,7 @@ def assemble_article_timeline(client, tenant: str = None) -> dict:
                                   (e.get("source_law_number") or "")))
         instrument_id = tcid.split("#", 1)[0]
         docobj = doc.query.fetch_object_by_id(generate_uuid5("doc:" + instrument_id))
-        base_vf = docobj.properties.get("publication_date") if docobj else None
+        base_vf = _vf_str(docobj.properties.get("publication_date")) if docobj else None
         base_flat = (flat.query.fetch_object_by_id(_flat_version_uuid(tcid, base_vf))
                      if base_vf else None)
         base_art = (art.query.fetch_object_by_id(_art_version_uuid(tcid, base_vf))
@@ -577,7 +604,7 @@ def graph_status(client, tenant: str = None) -> dict:
     for obj in amd.iterator():
         p = obj.properties
         total += 1
-        if not (p.get("effective_date") or "").strip():
+        if not _vf_str(p.get("effective_date")):
             undated += 1
         tcid = (p.get("target_canonical_id") or "").strip()
         instrument_id = tcid.split("#", 1)[0] if tcid else ""
