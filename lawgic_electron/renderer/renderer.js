@@ -4,6 +4,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const counts = { pending: 0, processing: 0, done: 0, review: 0, error: 0 };
 let folder = null;
+let paused = false;   // true when the run stopped on a credential/endpoint error
 
 // ---- tabs ----
 document.querySelectorAll('.tab').forEach((t) => {
@@ -62,9 +63,19 @@ $('chooseBtn').addEventListener('click', async () => {
 $('startBtn').addEventListener('click', () => {
   if (!folder) return;
   $('log').innerHTML = '';
+  paused = false; $('pausedBanner').hidden = true; $('resumeBtn').hidden = true;
   $('startBtn').disabled = true; $('cancelBtn').disabled = false;
   setPill('busy', 'ingesting');
   window.api.startIngest(folder);
+});
+
+$('resumeBtn').addEventListener('click', () => {
+  if (!folder) return;
+  paused = false; $('pausedBanner').hidden = true; $('resumeBtn').hidden = true;
+  $('startBtn').disabled = true; $('cancelBtn').disabled = false;
+  setPill('busy', 'resuming');
+  logLine({ stage: 'resume', doc: '', msg: 'continuing — already-done files are skipped' });
+  window.api.startIngest(folder);   // resume: the state DB skips done files, retries the rest
 });
 
 $('cancelBtn').addEventListener('click', () => window.api.cancel());
@@ -92,14 +103,37 @@ window.api.onPipelineEvent((o) => {
       break;
     }
     case 'summary': applyCounts(o.counts); break;
+    case 'fatal': {
+      paused = true;
+      const prov = o.provider || 'a provider', stg = o.stage || '', det = o.detail || '';
+      const where = o.doc ? ` at “${esc(o.doc)}”` : '';
+      const b = $('pausedBanner');
+      b.hidden = false;
+      b.innerHTML = `<b>⏸ Paused${where}</b> — <b>${esc(prov)}</b> failed during ` +
+        `${esc(stg)}. This looks like a wrong/expired key or URL, so the run stopped ` +
+        `instead of failing every remaining file.` +
+        `<div class="paused-detail">${esc(det)}</div>` +
+        `Fix <b>${esc(prov)}</b> under <b>Settings</b>, click <b>Save</b>, then <b>Resume</b>.`;
+      setPill('err', 'paused');
+      logLine({ stage: 'paused', doc: o.doc || '', msg: `${prov}: ${det}`, cls: 'bad', ts: o.ts });
+      break;
+    }
     case 'log': logLine({ stage: '', doc: '', msg: o.msg, ts: o.ts }); break;
   }
 });
 
 window.api.onPipelineDone(({ code, error }) => {
-  $('startBtn').disabled = !folder; $('cancelBtn').disabled = true;
-  if (code === 0) { setPill('ok', 'finished'); }
-  else { setPill('err', 'failed'); logLine({ stage: 'error', doc: '', msg: error, cls: 'bad' }); }
+  $('cancelBtn').disabled = true;
+  if (paused) {
+    // stopped on a credential/endpoint error — offer Resume, not a fresh Start
+    $('resumeBtn').hidden = false; $('startBtn').disabled = true;
+    setPill('err', 'paused');
+  } else if (code === 0) {
+    setPill('ok', 'finished'); $('startBtn').disabled = !folder;
+  } else {
+    setPill('err', 'failed'); $('startBtn').disabled = !folder;
+    logLine({ stage: 'error', doc: '', msg: error, cls: 'bad' });
+  }
   refreshStatus();
 });
 

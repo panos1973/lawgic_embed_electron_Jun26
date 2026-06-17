@@ -111,6 +111,20 @@ class State:
             return self.db.execute(
                 "SELECT * FROM documents WHERE status IN ('pending','error')").fetchall()
 
+    def requeue_stale(self) -> int:
+        """Reset any 'processing' rows left by an interrupted run back to 'pending'.
+
+        A fatal stop (or crash) can leave docs marked 'processing'; claim() treats
+        'processing' as held-by-another-worker and would skip them forever. Calling
+        this at the start of a run makes those docs resumable. Returns rows requeued.
+        """
+        with self._lock:
+            cur = self.db.execute(
+                "UPDATE documents SET status='pending', updated_at=? "
+                "WHERE status='processing'", (time.time(),))
+            self.db.commit()
+            return cur.rowcount
+
     def counts(self) -> dict:
         with self._lock:
             rows = self.db.execute(

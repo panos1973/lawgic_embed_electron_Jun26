@@ -24,8 +24,25 @@ import pipeline.refs as refs
 import voyage_embed as ve
 import weaviate_io as wio
 import logsetup
+from errors import FatalIngestError, looks_fatal, as_fatal  # noqa: F401 (as_fatal used by cli)
 
 log = logsetup.get("orchestrator")
+
+
+def _stage(provider: str, stage: str, fn):
+    """Run one external-call stage. Convert a credential/endpoint failure into a
+    FatalIngestError (which stops the whole run) while letting per-document and
+    transient errors propagate unchanged."""
+    try:
+        return fn()
+    except FatalIngestError:
+        raise
+    except SystemExit as e:               # config.require(): a REQUIRED key is missing
+        raise FatalIngestError(provider, stage, str(e)) from e
+    except Exception as e:                # noqa: BLE001
+        if looks_fatal(e):
+            raise FatalIngestError(provider, stage, f"{type(e).__name__}: {e}") from e
+        raise
 
 
 def _hash_file(path: str) -> str:
@@ -84,6 +101,12 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
                         "falling back to deterministic extractor for %s",
                         e, law.instrument_id)
             law = amend.extract_amendments(law)
+        except Exception as e:            # noqa: BLE001
+            # a WRONG key/endpoint (vs a missing one) recurs on every file -> stop.
+            if looks_fatal(e):
+                raise FatalIngestError(f"LLM ({config.LLM_PROVIDER})", "amend",
+                                       f"{type(e).__name__}: {e}") from e
+            raise
     else:
         law = amend.extract_amendments(law)
     law = amend.consolidate(law)
@@ -96,16 +119,21 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
     # enrich_llm is one LLM call per provision — the slowest stage on a long law.
     # Emit per-provision progress so the UI never looks frozen here.
     emit("enrich", f"{law.instrument_id}: LLM enrichment ({len(law.provisions)} provisions)")
-    law = enrich.enrich_llm(law, progress=lambda m: emit("enrich", m))
+    law = _stage(f"LLM ({config.LLM_PROVIDER})", "enrich (summaries)",
+                 lambda: enrich.enrich_llm(law, progress=lambda m: emit("enrich", m)))
     chunks = law.ordered_texts()
     emit("embed", f"{law.instrument_id}: embedding {len(chunks)} chunk(s)")
     log.info("embed %s: %d chunk(s)", law.instrument_id, len(chunks))
-    vectors = ve.embed_law_chunks(chunks, progress=lambda m: emit("embed", m))
+    vectors = _stage("Voyage", "embed",
+                     lambda: ve.embed_law_chunks(chunks, progress=lambda m: emit("embed", m)))
     emit("load")
-    wio.load_document(client, law)
-    wio.load_law(client, law, vectors)
-    wio.load_amendments(client, law.amendments, source_law=law)
-    wio.load_delegations(client, law.delegations, source_law=law)
+
+    def _load():
+        wio.load_document(client, law)
+        wio.load_law(client, law, vectors)
+        wio.load_amendments(client, law.amendments, source_law=law)
+        wio.load_delegations(client, law.delegations, source_law=law)
+    _stage("Weaviate", "load", _load)
     return "done", law
 
 
@@ -173,6 +201,14 @@ def process_document(client, st: State, path: str,
                  doc_id, done, total_prov, review)
         return "done"
 
+    except FatalIngestError as e:
+        # Credential/endpoint failure: release this doc back to 'pending' so a resume
+        # retries it after the fix, and propagate so the BATCH stops here instead of
+        # marking every remaining file 'error'.
+        st.set_status(doc_id, "pending", error=str(e))
+        emit("paused", str(e))
+        log.error("process PAUSED (fatal): %s — %s", doc_id, e)
+        raise
     except NotImplementedError as e:
         st.set_status(doc_id, "review", stage="extract", error=str(e))
         emit("review", str(e))

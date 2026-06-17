@@ -60,7 +60,20 @@ def cmd_ingest(folder: str):
     import orchestrator
     from concurrent.futures import ThreadPoolExecutor, as_completed
     st = State(config.STATE_DB)
-    client = wio.connect()
+    st.requeue_stale()      # stale 'processing' from an interrupted run -> resumable
+    # Connecting is the first credential gate: a bad Weaviate URL/key fails here,
+    # before any file — surface it as a clean PAUSE instead of a crash or churn.
+    try:
+        client = wio.connect()
+    except (Exception, SystemExit) as e:                 # noqa: BLE001
+        fe = orchestrator.as_fatal(e, "Weaviate", "connect")
+        emit({"type": "fatal", "provider": fe.provider, "stage": fe.stage,
+              "doc": "", "detail": fe.detail})
+        emit({"type": "summary", "counts": st.counts(), "paused": True})
+        if not JSON:
+            print(f"\nPAUSED — {fe.provider} ({fe.stage}): {fe.detail}")
+        st.close()
+        return
     try:
         pdfs = sorted(glob.glob(os.path.join(folder, "**", "*.pdf"), recursive=True))
         # Oldest-first by filename keeps a stable order; true chronological ordering
@@ -77,8 +90,12 @@ def cmd_ingest(folder: str):
         # worker (no thread overhead), preserving the simple serial path.
         workers = max(1, int(getattr(config, "CONCURRENCY", 4))) if total > 1 else 1
         done_n = [0]
+        stop = threading.Event()       # set on the first fatal -> no new files start
+        fatal = {}                     # the first fatal's provider/stage/doc/detail
 
         def _one(path):
+            if stop.is_set():
+                return "skipped"
             name = os.path.basename(path)
             emit({"type": "doc_start", "doc": name, "total": total})
 
@@ -87,7 +104,15 @@ def cmd_ingest(folder: str):
                 emit({"type": "stage", "doc": _n, "stage": stage, "msg": msg})
             try:
                 status = orchestrator.process_document(client, st, path, progress)
-            except Exception as e:                       # worker isolation
+            except orchestrator.FatalIngestError as fe:
+                # credential/endpoint failure: stop the whole run (first one wins).
+                # process_document already released this doc to 'pending' for resume.
+                if not stop.is_set():
+                    stop.set()
+                    fatal.update(provider=fe.provider, stage=fe.stage,
+                                 doc=name, detail=fe.detail)
+                return "fatal"
+            except Exception as e:                       # per-document isolation
                 status = "error"
                 emit({"type": "stage", "doc": name, "stage": "error", "msg": str(e)})
             done_n[0] += 1
@@ -97,18 +122,33 @@ def cmd_ingest(folder: str):
 
         if workers == 1:
             for path in pdfs:
+                if stop.is_set():
+                    break
                 _one(path)
         else:
             emit({"type": "stage", "doc": "", "stage": "parallel",
                   "msg": f"processing {total} docs, {workers} workers"})
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = [pool.submit(_one, p) for p in pdfs]
-                for _f in as_completed(futures):
-                    pass                                 # progress already emitted
+            pool = ThreadPoolExecutor(max_workers=workers)
+            futures = [pool.submit(_one, p) for p in pdfs]
+            for _f in as_completed(futures):
+                if stop.is_set():
+                    break                                # stop waiting on the rest
+            # cancel not-yet-started files; let the few in-flight ones wind down
+            pool.shutdown(wait=True, cancel_futures=True)
 
-        # PHASE 2 — serial cross-law consolidation (order-sensitive: amendment
-        # edges + version chains span laws and must NOT run concurrently). Safe,
-        # idempotent, skips targets not yet ingested.
+        if fatal:
+            # Credential/endpoint failure — STOP (do not consolidate). The operator
+            # fixes the key/URL in Settings, saves, and resumes by re-running ingest:
+            # the state DB skips done files and retries the interrupted one.
+            emit({"type": "fatal", **fatal})
+            emit({"type": "summary", "counts": st.counts(), "paused": True})
+            if not JSON:
+                print(f"\nPAUSED — {fatal['provider']} ({fatal['stage']}): "
+                      f"{fatal['detail']}\n  Fix the key/URL and re-run to resume.")
+            return
+
+        # PHASE 2 — serial cross-law consolidation (only when the batch finished
+        # without a fatal stop). Order-sensitive; safe, idempotent.
         try:
             res = wio.assemble_article_timeline(client)
             emit({"type": "stage", "doc": "", "stage": "consolidate",
@@ -254,6 +294,7 @@ def cmd_retry():
     import weaviate_io as wio
     import orchestrator
     st = State(config.STATE_DB)
+    st.requeue_stale()
     client = wio.connect()
     try:
         rows = st.pending()
@@ -268,7 +309,15 @@ def cmd_retry():
                 _human(stage, msg)
                 emit({"type": "stage", "doc": _n, "stage": stage, "msg": msg})
 
-            status = orchestrator.process_document(client, st, r["path"], progress)
+            try:
+                status = orchestrator.process_document(client, st, r["path"], progress)
+            except orchestrator.FatalIngestError as fe:
+                emit({"type": "fatal", "provider": fe.provider, "stage": fe.stage,
+                      "doc": name, "detail": fe.detail})
+                emit({"type": "summary", "counts": st.counts(), "paused": True})
+                if not JSON:
+                    print(f"\nPAUSED — {fe.provider} ({fe.stage}): {fe.detail}")
+                return
             emit({"type": "doc_done", "doc": name, "status": status})
         emit({"type": "summary", "counts": st.counts()})
         if not JSON:

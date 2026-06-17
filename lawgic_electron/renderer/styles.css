@@ -200,3 +200,12 @@ label.inline input, label.inline select { min-width: 220px; }
 .chunk-text { white-space: pre-wrap; word-break: break-word; background: var(--ink);
   border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-top: 6px;
   font-size: 12px; line-height: 1.5; max-height: 280px; overflow: auto; }
+
+/* paused-on-credential-error banner (ingest tab) */
+.paused-banner { margin: 10px 0; padding: 12px 14px; border-radius: 8px;
+  border: 1px solid var(--accent); background: rgba(177,55,74,0.12);
+  color: var(--text); line-height: 1.5; animation: rise .25s ease both; }
+.paused-banner b { color: var(--accent-2); }
+.paused-detail { margin: 8px 0; padding: 8px 10px; background: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px; font-size: 12px;
+  word-break: break-word; color: var(--muted); }
