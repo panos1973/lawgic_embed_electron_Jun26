@@ -35,6 +35,17 @@ def _ensure_client():
         import anthropic
         _client = anthropic.Anthropic(api_key=key)
         _kind = "anthropic"
+    elif spec["sdk"] == "azure":
+        # Azure OpenAI: same chat.completions surface as OpenAI, but the client is
+        # pinned to the resource endpoint + api-version, and `model` (set by
+        # model_name()) is the Azure DEPLOYMENT name.
+        if not config.AZURE_OPENAI_ENDPOINT:
+            raise SystemExit("Missing AZURE_OPENAI_ENDPOINT for LLM_PROVIDER=azure")
+        from openai import AzureOpenAI
+        _client = AzureOpenAI(api_key=key,
+                              azure_endpoint=config.AZURE_OPENAI_ENDPOINT,
+                              api_version=config.AZURE_OPENAI_API_VERSION)
+        _kind = "openai"
     else:
         from openai import OpenAI
         _client = OpenAI(api_key=key, base_url=spec["base_url"])

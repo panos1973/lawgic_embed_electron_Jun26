@@ -129,7 +129,8 @@ async function loadReview() {
 // ---- settings ----
 const FIELDS = ['pythonPath', 'coreDir', 'stateDb', 'jurisdiction', 'weaviateUrl',
   'weaviateApiKey', 'voyageApiKey', 'diEndpoint', 'diKey', 'anthropicKey',
-  'deepseekKey', 'geminiKey'];
+  'deepseekKey', 'geminiKey', 'azureOpenaiEndpoint', 'azureOpenaiKey',
+  'azureOpenaiApiVersion'];
 
 async function loadSettings() {
   const s = await window.api.getSettings();

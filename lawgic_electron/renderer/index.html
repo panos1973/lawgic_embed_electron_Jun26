@@ -132,6 +132,8 @@
             <option value="gemini|gemini-2.5-flash">Gemini 2.5 Flash ($0.30/$2.50)</option>
             <option value="deepseek|deepseek-v4-flash">DeepSeek V4 Flash — cheapest ($0.14/$0.28)</option>
             <option value="deepseek|deepseek-v4-pro">DeepSeek V4 Pro ($0.435/$0.87, 75% off)</option>
+            <option value="azure|gpt-4.1">Azure OpenAI · GPT-4.1</option>
+            <option value="azure|gpt-4.1-mini">Azure OpenAI · GPT-4.1 mini</option>
           </select>
         </label>
         <label class="check"><input type="checkbox" id="llmThinking" />
@@ -151,6 +153,9 @@
         <label>Anthropic API key<input id="anthropicKey" type="password" /></label>
         <label>DeepSeek API key<input id="deepseekKey" type="password" /></label>
         <label>Gemini API key<input id="geminiKey" type="password" /></label>
+        <label>Azure OpenAI endpoint<input id="azureOpenaiEndpoint" placeholder="https://<resource>.openai.azure.com/" /></label>
+        <label>Azure OpenAI key<input id="azureOpenaiKey" type="password" /></label>
+        <label>Azure OpenAI API version<input id="azureOpenaiApiVersion" placeholder="2024-10-21" /></label>
         <div class="row"><button class="btn primary" id="saveSettings">Save</button>
           <span class="saved" id="savedNote"></span></div>
       </div>
