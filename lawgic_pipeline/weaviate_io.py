@@ -443,10 +443,28 @@ def load_delegations(client, edges, source_law: Law = None, tenant: str = None):
         raise RuntimeError(f"delegation load failed: {deleg.batch.failed_objects[:2]}")
 
 
+# Outer quotation wrappers an amendment uses to delimit its replacement block.
+# Greek statutes use «…»; some OCR/LLM output uses the curly “…”/„…”.
+_OUTER_QUOTE_PAIRS = (("«", "»"), ("“", "”"), ("„", "”"), ("‟", "”"))
+
+
+def _strip_amend_quotes(text: str) -> str:
+    """Drop ONE balanced outer quotation wrapper from an amendment's new_text so the
+    consolidated in-force text reads as plain provision text — not «…»-wrapped. Inner
+    and nested quotes are preserved; text without a full outer wrapper is unchanged."""
+    if not text:
+        return text
+    s = text.strip()
+    for open_q, close_q in _OUTER_QUOTE_PAIRS:
+        if len(s) >= 2 and s[0] == open_q and s[-1] == close_q:
+            return s[1:-1].strip()
+    return s
+
+
 def _apply_edit(edge: dict, prev_text: str) -> str:
     """Article text AFTER applying one amendment edge to prev_text (docs §5A)."""
     action = edge.get("action")
-    nt = (edge.get("new_text") or "").strip()
+    nt = _strip_amend_quotes((edge.get("new_text") or "").strip())
     if action == "repeals":
         return prev_text                       # text frozen; status marks repealed
     if action == "adds" and nt:
@@ -563,7 +581,8 @@ def assemble_article_timeline(client, tenant: str = None) -> dict:
         else:                                  # 'adds' creates the article -> seed v1
             seed = adds[0]
             edges = [e for e in edges if e is not seed]
-            cur_text, cur_vf, version = (seed.get("new_text") or ""), seed.get("effective_date"), 1
+            cur_text, cur_vf, version = (_strip_amend_quotes(seed.get("new_text") or ""),
+                                         seed.get("effective_date"), 1)
             versions += _write_version_pair(flat, art, flat_base, art_base, tcid,
                                             cur_text, cur_vf, version, "in_force",
                                             True, embed_law_chunks)

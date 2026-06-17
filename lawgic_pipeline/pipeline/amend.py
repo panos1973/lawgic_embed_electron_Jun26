@@ -213,18 +213,29 @@ def _is_heading_only(nt: str) -> bool:
     return False
 
 
-# A new_text at least this long is a full provision RESTATEMENT ("…διαμορφώνεται ως
-# εξής: «[whole paragraph/article]»"), not a phrase/word micro-edit.
-_RESTATEMENT_MIN = 150
+# Actions that should carry quoted new text; an EMPTY one is a bare verb-clause and,
+# when a sibling edit to the same target DOES carry text, redundant. (repeals /
+# renumbers legitimately have no new_text — never dropped here.)
+_CONTENTFUL_OPS = {"adds", "replaces", "amends", "modifies", "consolidates"}
+_MIN_SUBSUMED = 6                                   # ignore trivially-short fragments
+_QUOTES = "«»“”„‹›‘’'\""
+
+
+def _unquote(s: str) -> str:
+    return (s or "").strip().strip(_QUOTES).strip()
 
 
 def _collapse_restatements(ops: list) -> list:
-    """Collapse the "διαμορφώνεται ως εξής" artifact: a micro-edit AND the full
-    restated provision arrive as two edges on the SAME target (e.g. adds «, ιδίως,»
-    + replaces «[full paragraph]»). The restatement already contains the micro-edit,
-    so when a real restatement is present keep only the fullest-text edge per target
-    and drop the redundant micro-edits. If a target's edges are all short (no
-    restatement), keep them ALL so genuine distinct edits are never lost. Order kept.
+    """Collapse the "διαμορφώνεται ως εξής" artifact (and its variants) per target.
+
+    For edges that hit the SAME provision:
+      * drop a contentless edit (empty new_text on a should-have-text action) when a
+        sibling carries text — it is the bare verb-clause, superseded by the real one;
+      * drop a micro-edit whose quoted text appears VERBATIM inside a longer sibling's
+        text — that sibling is the consolidated restatement, which already
+        incorporates it (so nothing is lost).
+    Genuinely distinct edits (whose texts don't contain one another) are ALL kept, so
+    no real amendment is dropped. Order preserved.
     """
     groups: dict[str, list] = {}
     for op in ops:
@@ -233,12 +244,20 @@ def _collapse_restatements(ops: list) -> list:
     for tid, grp in groups.items():
         if not tid or len(grp) < 2:
             continue
-        longest = max(grp, key=lambda o: len(o.new_text or ""))
-        if len(longest.new_text or "") < _RESTATEMENT_MIN:
-            continue                          # all short -> no restatement; keep all
-        for op in grp:
-            if op is not longest:
-                drop.add(id(op))
+        has_text = any(_unquote(o.new_text) for o in grp)
+        for o in grp:
+            nt = _unquote(o.new_text)
+            if not nt and has_text and o.op in _CONTENTFUL_OPS:
+                drop.add(id(o))                       # redundant bare verb-clause
+                continue
+            if len(nt) >= _MIN_SUBSUMED:
+                for f in grp:
+                    if f is o:
+                        continue
+                    ft = _unquote(f.new_text)
+                    if len(ft) > len(nt) and nt in ft:
+                        drop.add(id(o))               # subsumed by the restatement
+                        break
     return [op for op in ops if id(op) not in drop]
 
 

@@ -603,6 +603,34 @@ def test_law_fields_mapping_covers_all_collections():
         "enabling_law_number", "implementing_law_number"}
 
 
+def test_strip_amend_quotes_unwraps_outer_guillemets_only():
+    # the «…» wrapper an amendment uses to delimit a replacement block must go,
+    # so the consolidated in-force text reads as plain provision text.
+    assert wio._strip_amend_quotes("«7. Εθνική Αρχή Κυβερνοασφάλειας (Ε.Α.Κ.).»") == \
+        "7. Εθνική Αρχή Κυβερνοασφάλειας (Ε.Α.Κ.)."
+    # curly quotes too
+    assert wio._strip_amend_quotes("“φορέας υλοποίησης”") == "φορέας υλοποίησης"
+    # NESTED inner quotes are preserved (only one outer pair is removed)
+    assert wio._strip_amend_quotes("«με την επωνυμία «Ε.Α.Κ.» του φορέα»") == \
+        "με την επωνυμία «Ε.Α.Κ.» του φορέα"
+    # unwrapped text and partial/unbalanced quotes are left untouched
+    assert wio._strip_amend_quotes("4. Στο πλαίσιο λειτουργίας") == \
+        "4. Στο πλαίσιο λειτουργίας"
+    assert wio._strip_amend_quotes("«μισό quote") == "«μισό quote"
+    assert wio._strip_amend_quotes("") == "" and wio._strip_amend_quotes(None) is None
+
+
+def test_apply_edit_strips_quotes_for_replace_and_add():
+    # a 'replaces' edge whose new_text is «…»-wrapped yields clean in-force text
+    assert wio._apply_edit({"action": "replaces",
+                            "new_text": "«οι φορείς υλοποίησης»"}, "old") == \
+        "οι φορείς υλοποίησης"
+    # an 'adds' that creates the provision seeds clean (no leading «)
+    assert wio._apply_edit({"action": "adds",
+                            "new_text": "«13. Με κοινή απόφαση…»"}, "") == \
+        "13. Με κοινή απόφαση…"
+
+
 def test_vf_str_normalizes_datetime_and_strings():
     import datetime as dt
     aware = dt.datetime(2024, 2, 14, 0, 0, tzinfo=dt.timezone.utc)
