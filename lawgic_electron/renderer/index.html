@@ -165,6 +165,12 @@
       <div class="panel">
         <div class="panel-title">Diagnostics</div>
         <div class="row">
+          <button class="btn" id="testCreds">Test credentials</button>
+          <span class="hint">pings Weaviate &amp; Azure DI — no embed, no cost</span>
+          <span class="saved" id="diagNote"></span>
+        </div>
+        <pre id="diagOut" class="diag-out" hidden></pre>
+        <div class="row">
           <button class="btn ghost" id="openLogs">Open logs folder</button>
           <code class="path" id="logPath">—</code>
         </div>
