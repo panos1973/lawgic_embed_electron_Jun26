@@ -120,6 +120,19 @@ _BARCODE = re.compile(r"^\s*\*\d{6,}\*\s*$", re.MULTILINE)
 _TRAILER = re.compile(
     r"(Καποδιστρίου\s+34|ΕΞΥΠΗΡΕΤΗΣΗ\s+ΚΟΙΝΟΥ|Το\s+Εθνικό\s+Τυπογραφείο)"
     r".*\Z", re.IGNORECASE | re.DOTALL)
+# Promulgation + signature trailer of a νόμος: the closing "Παραγγέλλομε τη
+# δημοσίευση ... ως νόμου του Κράτους", the President + ministers' signatures, the
+# "Θεωρήθηκε ... Μεγάλη Σφραγίδα" attestation and the all-caps ΕΘΝΙΚΟ ΤΥΠΟΓΡΑΦΕΙΟ
+# footer that _TRAILER's "Το Εθνικό Τυπογραφείο" anchor misses. None of it is
+# substantive law, but with two-column dewrapping it lands inside the final article
+# ("Έναρξη ισχύος") — polluting that chunk's vector/summary with ministers' names.
+# Cut from the end-only promulgation/seal anchor to EOF (swallowing an optional
+# inline running-header just before it). Safe: a law's BODY never says
+# "Παραγγέλλομε" — the enacting formula at the START uses "Εκδίδομε".
+_PROMULGATION = re.compile(
+    r"\s*(?:ΕΦΗΜΕΡΙ[ΔΑ∆]+Α?\s+Τ?ΗΣ\s+ΚΥΒΕΡΝΗΣΕΩΣ\s*\d*\s*)?"
+    r"(?:Παραγγ[εέ]λλο(?:υ)?με|Θεωρήθηκε\s+και\s+τέθηκε\s+η\s+Μεγάλη\s+Σφραγίδα)"
+    r".*\Z", re.IGNORECASE | re.DOTALL)
 
 
 def strip_furniture(text: str) -> str:
@@ -127,6 +140,7 @@ def strip_furniture(text: str) -> str:
         return text
     text = _AZURE_COMMENT.sub("", text)       # Azure DI <!-- Page… --> comments
     text = _TRAILER.sub("", text)
+    text = _PROMULGATION.sub("", text)        # promulgation + signatures + seal trailer
     text = _RUN_HEADER.sub("", text)
     text = _ISSUE_STAMP.sub(" ", text)        # lone "Τεύχος A' 9/19.01.2024" stamps
     text = _HEADER_FRAG.sub("", text)         # lone masthead-word lines (± page no.)

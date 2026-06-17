@@ -297,6 +297,13 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
     art = client.collections.use(config.GRAPH_ARTICLE).with_tenant(tenant)
 
     total = len(law.provisions)
+    # Denormalize onto each source article WHICH target provisions it amends, from
+    # the edges' source_id (set by the extractor) — so a hit on the source article's
+    # flat record shows e.g. "ν.5005/2022#αρ.14.παρ.1:replaces" without a graph hop.
+    amends_by_src: dict[str, list[str]] = {}
+    for _op in law.amendments:
+        if _op.source_id and _op.target_id:
+            amends_by_src.setdefault(_op.source_id, []).append(f"{_op.target_id}:{_op.op}")
     # Each provision lands as its ENACTED version (v1): valid_from = the law's FEK
     # date, valid_to = null, is_current = True. Later amendments append further
     # versions via assemble_article_timeline. UUIDs are per-version so the history
@@ -305,6 +312,9 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
         for i, (p, vec) in enumerate(zip(law.provisions, vectors)):
             vf = _enacted_valid_from(p, law)
             props = _flat_props(p, law, i, total)
+            am = amends_by_src.get(p.canonical_id)
+            if am:
+                props["amends_provisions"] = list(dict.fromkeys(am))
             props["version"] = p.version
             props["is_current"] = p.is_current
             if vf:
