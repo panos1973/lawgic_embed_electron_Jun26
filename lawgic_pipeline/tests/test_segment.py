@@ -8,6 +8,36 @@ from pipeline.segment import segment  # noqa: E402
 from models import Law, TYPE_NOMOS  # noqa: E402
 
 
+def test_short_no_article_document_stays_single_full_chunk():
+    # backward-compatible: a short decision (no Άρθρα) is still ONE '#full' chunk
+    law = Law(instrument_id="Β΄2/2025", instrument_key="x", instrument_type=TYPE_NOMOS)
+    law = segment("Σύντομη απόφαση χωρίς άρθρα, ένα μικρό κείμενο.", law)
+    assert len(law.provisions) == 1
+    assert law.provisions[0].canonical_id == "Β΄2/2025#full"
+    assert law.provisions[0].chunk_type == "document"
+
+
+def test_long_no_article_document_splits_into_vectorizable_sections():
+    # a no-Άρθρο body bigger than one chunk (e.g. a ΥΑ annexing a long UN resolution)
+    # must split into article-sized sections so EACH is its own embeddable chunk —
+    # not one oversized chunk that fails to vectorize. Language-agnostic.
+    from pipeline.segment import _DOC_CHUNK_CHARS
+    body = "ΑΠΟΦΑΣΕΙΣ\n" + "\n".join(
+        f"{i}. The Security Council " + "decides and reaffirms " * 12
+        for i in range(1, 30))
+    law = Law(instrument_id="Β΄1/2025", instrument_key="x", instrument_type=TYPE_NOMOS)
+    law = segment(body, law)
+    secs = law.provisions
+    assert len(secs) > 1                                       # split, not one blob
+    assert all(p.chunk_type == "section" for p in secs)
+    assert [p.canonical_id for p in secs[:2]] == ["Β΄1/2025#τμ.1", "Β΄1/2025#τμ.2"]
+    # each section is within the embedder-friendly size budget
+    assert all(len(p.text_in_force) <= _DOC_CHUNK_CHARS + 400 for p in secs)
+    # nothing is lost: every numbered clause survives across the sections
+    joined = "\n".join(p.text_in_force for p in secs)
+    assert all(f"{i}. The Security Council" in joined for i in range(1, 30))
+
+
 def test_spelled_ordinal_articles():
     law = Law(instrument_id="Π.Ν.Π.1/2023", instrument_key="x",
               instrument_type=TYPE_NOMOS)

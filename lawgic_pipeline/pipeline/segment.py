@@ -63,6 +63,51 @@ def _first_line(block: str) -> str:
     return ""
 
 
+# A no-Άρθρο document (most FEK decisions, and acts whose body is a verbatim
+# foreign-language annex like a ratified UN resolution) must still be chunked into
+# article-sized, individually embeddable sections — NOT one giant document chunk
+# that overflows the embedder and leaves the text un-vectorized. Language-agnostic:
+# Greek preamble, English body and Greek translation are all packed the same way.
+_DOC_CHUNK_CHARS = 2000
+
+
+def _split_document_body(body: str, target: int = _DOC_CHUNK_CHARS) -> list[str]:
+    """Pack a no-Άρθρο body into <=~target-char sections, line by line, preferring
+    blank-line and numbered-clause boundaries. A single over-long line is hard-cut.
+    Every character lands in exactly one section. Returns [body] when it fits."""
+    body = body.strip()
+    if len(body) <= target:
+        return [body]
+    sections: list[str] = []
+    cur: list[str] = []
+    cur_len = 0
+
+    def flush():
+        nonlocal cur, cur_len
+        if cur:
+            joined = "\n".join(cur).strip()
+            if joined:
+                sections.append(joined)
+            cur, cur_len = [], 0
+
+    for line in body.split("\n"):
+        if len(line) > target:                       # giant unbroken line -> hard wrap
+            flush()
+            for i in range(0, len(line), target):
+                sections.append(line[i:i + target])
+            continue
+        # start a new section at a numbered-clause boundary once the current one has
+        # real content, so "1. …", "2. …" tend to begin a section rather than split
+        starts_clause = bool(re.match(r"\s*\d{1,3}[.)]\s", line))
+        if cur_len and (cur_len + len(line) + 1 > target
+                        or (starts_clause and cur_len > target // 2)):
+            flush()
+        cur.append(line)
+        cur_len += len(line) + 1
+    flush()
+    return [s for s in sections if s] or [body]
+
+
 # A quoted span longer than this fraction of the whole instrument, AND carrying a
 # run of article headers, is not a local insertion — it is the enacted/ratified
 # body itself. A codification/ratification quotes its entire code in one outer span
@@ -235,17 +280,25 @@ def segment(text: str, law: Law) -> Law:
     if not law.provisions:
         body = text.strip()
         if body:
-            cid = f"{law.instrument_id}#full"
-            law.provisions.append(Provision(
-                canonical_id=cid, instrument_id=law.instrument_id,
-                instrument_key=law.instrument_key,
-                instrument_type=law.instrument_type,
-                fek_series=law.fek_series, fek_number=law.fek_number,
-                fek_date=law.fek_date,
-                article_no="", article_title=_first_line(body),
-                level="document", chunk_type="document",
-                hierarchy_path=law.instrument_id,
-                text_in_force=body, text_normalized=fold_for_bm25(body),
-                text_stemmed=stem_text(body),
-                content_hash=hashlib.sha256(body.encode()).hexdigest()))
+            sections = _split_document_body(body)
+            n = len(sections)
+            for i, sec in enumerate(sections):
+                # one section -> keep the historical '#full' id and 'document' type
+                # (byte-identical to the pre-split behaviour for short decisions);
+                # many -> '#τμ.N' sections so each is its own vectorized chunk.
+                cid = (f"{law.instrument_id}#full" if n == 1
+                       else f"{law.instrument_id}#τμ.{i + 1}")
+                law.provisions.append(Provision(
+                    canonical_id=cid, instrument_id=law.instrument_id,
+                    instrument_key=law.instrument_key,
+                    instrument_type=law.instrument_type,
+                    fek_series=law.fek_series, fek_number=law.fek_number,
+                    fek_date=law.fek_date,
+                    article_no="" if n == 1 else str(i + 1),
+                    article_title=_first_line(sec),
+                    level="document", chunk_type="document" if n == 1 else "section",
+                    hierarchy_path=law.instrument_id,
+                    text_in_force=sec, text_normalized=fold_for_bm25(sec),
+                    text_stemmed=stem_text(sec),
+                    content_hash=hashlib.sha256(sec.encode()).hexdigest()))
     return law
