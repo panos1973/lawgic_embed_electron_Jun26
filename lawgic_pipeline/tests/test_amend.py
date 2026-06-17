@@ -235,3 +235,49 @@ def test_clean_dedups_exact_duplicates():
     op2 = AmendmentOp(op="replaces", target_id="ν.4186/2013#αρ.9", scope="article",
                       new_text="Άρθρο 9 ..." * 3, resolved=True)
     assert len(_clean_amendments([op, op2], "ν.5082/2024")) == 1
+
+
+def test_drop_phantom_repeal_contradicted_by_same_article_restatement():
+    """ν.5086 art.19/29/31 each emitted a bare 'repeals' alongside the real
+    text-bearing restatement of the SAME target. The law amends (not deletes), so
+    the phantom repeal — which would falsely flip the provision to 'repealed' — is
+    dropped; the restatement is kept."""
+    from pipeline.amend import _clean_amendments
+    from models import AmendmentOp
+    src = "ν.5086/2024#αρ.19"
+    ops = [
+        AmendmentOp(op="replaces", target_id="ν.5002/2022#αρ.23.παρ.1", scope="paragraph",
+                    new_text="«1. Η Επιτροπή Συντονισμού αποτελείται από έξι (6) μέλη.»",
+                    resolved=True, source_id=src),
+        AmendmentOp(op="repeals", target_id="ν.5002/2022#αρ.23.παρ.1", scope="paragraph",
+                    new_text=None, resolved=True, source_id=src),
+    ]
+    out = _clean_amendments(ops, "ν.5086/2024")
+    assert [o.op for o in out] == ["replaces"]
+    # an 'adds' restatement contradicts a sibling repeal the same way (art.31 case)
+    src2 = "ν.5086/2024#αρ.31"
+    ops2 = [
+        AmendmentOp(op="adds", target_id="ν.5005/2022#αρ.28.παρ.2", scope="paragraph",
+                    new_text="«2. Για την πρώτη εφαρμογή του παρόντος ...»",
+                    resolved=True, source_id=src2),
+        AmendmentOp(op="repeals", target_id="ν.5005/2022#αρ.28.παρ.2", scope="paragraph",
+                    new_text=None, resolved=True, source_id=src2),
+    ]
+    assert [o.op for o in _clean_amendments(ops2, "ν.5086/2024")] == ["adds"]
+
+
+def test_keep_repeal_when_restatement_is_from_a_different_article():
+    """Scoped per (source, target): a repeal from one article survives even if a
+    DIFFERENT article restates the same target — two distinct legislative acts are
+    never merged. (A genuine standalone repeal is never dropped.)"""
+    from pipeline.amend import _clean_amendments
+    from models import AmendmentOp
+    ops = [
+        AmendmentOp(op="repeals", target_id="ν.4635/2019#αρ.50", scope="article",
+                    new_text=None, resolved=True, source_id="ν.5086/2024#αρ.22"),
+        AmendmentOp(op="replaces", target_id="ν.4635/2019#αρ.50", scope="article",
+                    new_text="«Άρθρο 50 εντελώς νέο και εκτενές κείμενο διάταξης.»",
+                    resolved=True, source_id="ν.5086/2024#αρ.40"),
+    ]
+    out = _clean_amendments(ops, "ν.5086/2024")
+    assert {o.op for o in out} == {"repeals", "replaces"} and len(out) == 2
