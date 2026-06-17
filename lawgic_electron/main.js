@@ -156,6 +156,7 @@ function registerIpc(win) {
   ipcMain.handle('pipeline:retry', () => { runStreaming(win, ['retry']); return true; });
   ipcMain.on('pipeline:cancel', () => { if (activeChild) activeChild.kill(); });
   ipcMain.handle('pipeline:status', () => runOneShot(['status'], 'status'));
+  ipcMain.handle('pipeline:diag', () => runOneShot(['diag'], 'diag'));
   ipcMain.handle('pipeline:review', () => runOneShot(['review'], 'review'));
   ipcMain.handle('state:reset', () => runOneShot(['reset-state'], 'reset_state'));
   ipcMain.handle('collections:list', () => runOneShot(['collections'], 'collections'));

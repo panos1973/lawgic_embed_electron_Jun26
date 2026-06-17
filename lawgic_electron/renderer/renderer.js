@@ -189,6 +189,39 @@ $('saveSettings').addEventListener('click', async () => {
   setTimeout(() => ($('savedNote').textContent = ''), 2000);
 });
 
+// ---- credential / connectivity self-check ----
+$('testCreds').addEventListener('click', async () => {
+  // persist the current form first so the check uses the keys on screen, not stale ones
+  const obj = {};
+  FIELDS.forEach((f) => { if ($(f)) obj[f] = $(f).value.trim(); });
+  const [provider, model] = $('llmChoice').value.split('|');
+  obj.llmProvider = provider; obj.llmModel = model;
+  obj.llmThinking = $('llmThinking').checked;
+  obj.amendExtractor = $('amendLlm').checked ? 'llm' : 'deterministic';
+  await window.api.saveSettings(obj);
+
+  $('diagNote').textContent = 'checking…';
+  const rep = await window.api.runDiag();
+  const lines = [];
+  if (!rep || rep.error) {
+    lines.push('error: ' + ((rep && rep.error) || 'no response'));
+  } else {
+    lines.push('Credentials present:');
+    for (const [k, v] of Object.entries(rep.configured || {})) {
+      const mark = v === true ? '✓' : v === false ? '·' : v;
+      lines.push(`  ${mark}  ${k}`);
+    }
+    lines.push('Connectivity:');
+    for (const c of (rep.checks || [])) {
+      lines.push(`  ${c.ok ? '✓ OK  ' : '✗ FAIL'}  ${c.service}: ${c.detail}`);
+    }
+  }
+  $('diagOut').textContent = lines.join('\n');
+  $('diagOut').hidden = false;
+  $('diagNote').textContent = (rep && rep.ok) ? 'all OK ✓' : 'see results';
+  setTimeout(() => ($('diagNote').textContent = ''), 3000);
+});
+
 // ---- logs ----
 $('openLogs').addEventListener('click', async () => {
   const p = await window.api.openLogs();

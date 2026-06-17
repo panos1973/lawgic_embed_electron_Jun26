@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   retry: () => ipcRenderer.invoke('pipeline:retry'),
   cancel: () => ipcRenderer.send('pipeline:cancel'),
   getStatus: () => ipcRenderer.invoke('pipeline:status'),
+  runDiag: () => ipcRenderer.invoke('pipeline:diag'),
   getReview: () => ipcRenderer.invoke('pipeline:review'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (obj) => ipcRenderer.invoke('settings:save', obj),

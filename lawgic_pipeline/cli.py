@@ -216,6 +216,23 @@ def cmd_graph_status():
         client.close()
 
 
+def cmd_diag():
+    """Credential / connectivity self-check — confirms keys without a full embed."""
+    import diag
+    rep = diag.run_diagnostics()
+    emit({"type": "diag", **rep})
+    if not JSON:
+        cfg = rep["configured"]
+        print("Configured credentials (presence only):")
+        for k, v in cfg.items():
+            print(f"  {k}: {v}")
+        print("Connectivity:")
+        for c in rep["checks"]:
+            mark = "OK " if c["ok"] else "FAIL"
+            print(f"  [{mark}] {c['service']}: {c['detail']}")
+        print("ALL OK" if rep["ok"] else "Some checks FAILED — see above")
+
+
 def cmd_status():
     st = State(config.STATE_DB)
     counts = st.counts()
@@ -387,6 +404,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("ingest"); p.add_argument("folder")
     sub.add_parser("status")
+    sub.add_parser("diag")                     # credential/connectivity self-check
     sub.add_parser("review")
     sub.add_parser("retry")
     sub.add_parser("consolidate")              # build versioned amendment timeline
@@ -404,6 +422,7 @@ def main():
     import logsetup
     logsetup.init()                            # durable rotating file log
     {"ingest": lambda: cmd_ingest(args.folder), "status": cmd_status,
+     "diag": cmd_diag,
      "review": cmd_review, "retry": cmd_retry,
      "consolidate": cmd_consolidate,
      "graph-status": cmd_graph_status,
