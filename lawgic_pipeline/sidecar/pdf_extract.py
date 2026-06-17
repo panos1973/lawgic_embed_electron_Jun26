@@ -71,10 +71,76 @@ def _column_text(page) -> str:
     crossing = sum(1 for w in words if w["x0"] < g < w["x1"])
     left = [w for w in words if w["x1"] <= g]
     right = [w for w in words if w["x0"] >= g]
-    # Two-column only if the gutter is genuinely clear and both sides populated.
+    # Primary path (unchanged): a clean central gutter across the whole page ->
+    # emit the whole left column then the whole right column.
     if (crossing / len(words) < 0.04 and len(left) >= 8 and len(right) >= 8):
         return "\n".join(_group_lines(left) + _group_lines(right))
+    # Fallback. A MIXED page — a two-column block (e.g. a FEK decision's Greek
+    # preamble) followed by full-width single-column text (e.g. an annexed
+    # foreign-language resolution) — fails the whole-page test because the
+    # single-column lines cross the gutter. Line-by-line extract_text() would then
+    # interleave the two-column block. If the page actually contains a two-column
+    # band, reconstruct it band-aware; otherwise keep plain extract_text().
+    rows = _rows(words)
+    twocol_rows = sum(
+        1 for r in rows
+        if not _spans_gutter(r, g)
+        and any(w["x1"] <= g for w in r) and any(w["x0"] >= g for w in r))
+    if twocol_rows >= 3:
+        return _banded_text(rows, g)
     return page.extract_text() or ""
+
+
+def _rows(words: list[dict], ytol: float = 3.0) -> list[list[dict]]:
+    """Group words into visual rows by 'top' (each row sorted left-to-right)."""
+    ws = sorted(words, key=lambda w: (round(w["top"] / ytol), w["x0"]))
+    rows, cur, cur_top = [], [], None
+    for w in ws:
+        if cur_top is None or abs(w["top"] - cur_top) <= ytol:
+            cur.append(w)
+            cur_top = w["top"] if cur_top is None else cur_top
+        else:
+            rows.append(sorted(cur, key=lambda x: x["x0"]))
+            cur, cur_top = [w], w["top"]
+    if cur:
+        rows.append(sorted(cur, key=lambda x: x["x0"]))
+    return rows
+
+
+def _spans_gutter(row: list[dict], g: float) -> bool:
+    """A row is full-width (single-column) when a word straddles the centre gutter;
+    a genuine two-column row keeps every word on one side, leaving the gutter clear."""
+    return any(w["x0"] < g < w["x1"] for w in row)
+
+
+def _banded_text(rows: list[list[dict]], g: float) -> str:
+    """Reconstruct a mixed page. Walk rows top->bottom: buffer two-column rows (split
+    at the gutter) and flush the buffer — whole left column, then whole right column —
+    whenever a full-width line interrupts, so a two-column block is never read across
+    the gutter. Pure single-column input degrades to plain top-to-bottom order."""
+    left: list[str] = []
+    right: list[str] = []
+    out: list[str] = []
+
+    def flush():
+        out.extend(left)
+        out.extend(right)
+        left.clear()
+        right.clear()
+
+    for row in rows:
+        if _spans_gutter(row, g):
+            flush()
+            out.append(_line_text(row))
+        else:
+            lw = [w for w in row if w["x1"] <= g]
+            rw = [w for w in row if w["x0"] >= g]
+            if lw:
+                left.append(_line_text(lw))
+            if rw:
+                right.append(_line_text(rw))
+    flush()
+    return "\n".join(out)
 
 
 def _table_to_markdown(rows) -> str:
