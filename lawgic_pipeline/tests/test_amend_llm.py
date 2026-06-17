@@ -67,6 +67,21 @@ def test_law_target_defaults_to_nomos_when_type_absent():
     assert law.amendments[0].target_id == "ν.4412/2016#αρ.5"
 
 
+def test_source_id_records_the_amending_article_of_this_law():
+    # the edge must record WHICH article of the enacting (new) law made the change,
+    # so the loader writes source_canonical_id / source_article_number (and the graph
+    # can answer "ν.5090/2024 art.1 amends ν.4412/2016 art.5"), not just the target.
+    law = _law("Το άρθρο 5 του ν. 4412/2016 αντικαθίσταται ως εξής: "
+               "«νέο κείμενο του άρθρου με πεζά γράμματα.»")
+    extract_amendments_llm(law, complete=_fake({"amendments": [{
+        "action": "replaces", "scope": "article", "target_law_number": "4412/2016",
+        "target_article_number": "5",
+        "new_text": "νέο κείμενο του άρθρου με πεζά γράμματα."}]}))
+    op = law.amendments[0]
+    assert op.source_id == "ν.5090/2024#αρ.1"      # the amending article of THIS law
+    assert op.target_id == "ν.4412/2016#αρ.5"      # ... altering art.5 of the older law
+
+
 def test_multi_target_split_into_two_ops():
     law = _law("Οι παρ. 8 και 9 του άρθρου 64 του ν. 4172/2013 "
                "αντικαθίστανται ως εξής: «8. … 9. …»")
