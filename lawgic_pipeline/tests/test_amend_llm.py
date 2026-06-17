@@ -217,6 +217,49 @@ def test_extraction_method_records_llm_provider_and_model():
     assert method != "pattern_matching"
 
 
+def test_amend_call_requests_generous_token_cap():
+    # regression guard: the echo call must request a generous OUTPUT cap so a full
+    # «...» restatement is not truncated. At 1500 the JSON came back cut mid-string,
+    # json.loads failed, and a whole article's amendments were silently dropped
+    # (the real ν.5086 art.34 -> ν.4368/2016#αρ.90.παρ.7.περ.γ miss, 6k+ chars).
+    from pipeline.amend_llm import _AMEND_MAX_TOKENS
+    seen = {}
+
+    def fake(system, user, want_json=True, max_tokens=1500):
+        seen["max_tokens"] = max_tokens
+        return json.dumps({"amendments": []})
+
+    law = _law("Το άρθρο 5 του ν. 4412/2016 αντικαθίσταται ως εξής: «νέο κείμενο.»")
+    extract_amendments_llm(law, complete=fake)
+    assert seen["max_tokens"] == _AMEND_MAX_TOKENS and _AMEND_MAX_TOKENS >= 4000
+
+
+def test_truncated_json_salvaged_by_structure_only_retry():
+    # When the echo call's JSON is truncated (huge replacement block over the cap),
+    # the article's amendments must NOT be silently lost: a structure-only retry
+    # recovers the EDGE (action + target) even with empty new_text. This is exactly
+    # the ν.5086 art.34 failure mode.
+    calls = {"n": 0}
+
+    def fake(system, user, want_json=True, max_tokens=1500):
+        calls["n"] += 1
+        if "OVERRIDE" in system:                       # salvage call: structure only
+            return json.dumps({"amendments": [{
+                "action": "replaces", "scope": "case", "target_law_number": "4368/2016",
+                "target_article_number": "90", "target_paragraph": "7",
+                "target_case": "γ", "new_text": ""}]})
+        return '{"amendments":[{"action":"replaces","new_text":"«γ) Με απόφαση'  # truncated
+
+    law = _law("Η περ. γ) της παρ. 7 του άρθρου 90 του ν. 4368/2016 "
+               "αντικαθίσταται ως εξής: «γ) Με απόφαση … [πολύ μεγάλο κείμενο] …»")
+    extract_amendments_llm(law, complete=fake)
+    assert calls["n"] == 2                             # echo failed -> salvage retried
+    assert len(law.amendments) == 1
+    op = law.amendments[0]
+    assert op.op == "replaces"
+    assert op.target_id == "ν.4368/2016#αρ.90.παρ.7.περ.γ"   # edge recovered, not lost
+
+
 def test_literal_null_case_is_not_appended_to_target_id():
     # the model sometimes echoes a JSON null as the string "null" for target_case;
     # it must NOT leak into the canonical id as '.περ.null' (observed in a live run).
