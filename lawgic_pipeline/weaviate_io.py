@@ -561,7 +561,12 @@ def assemble_article_timeline(client, tenant: str = None) -> dict:
         base_art = (art.query.fetch_object_by_id(_art_version_uuid(tcid, base_vf))
                     if base_vf else None)
 
-        adds = [e for e in edges if e.get("action") == "adds"]
+        # Only a text-bearing 'adds' can SEED a brand-new provision node. An empty
+        # 'adds' (e.g. a salvaged structure-only edge whose replacement text was too
+        # large to capture) must not materialize an empty node — keep its edge in the
+        # graph but leave the provision pending until real text exists.
+        adds = [e for e in edges if e.get("action") == "adds"
+                and (e.get("new_text") or "").strip()]
         if base_art is None and not adds:
             pending += len(edges)              # target law not ingested yet
             continue

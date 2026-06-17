@@ -67,6 +67,35 @@ _SYSTEM = (
     "makes no amendment, return {\"amendments\":[]}. No prose, JSON only."
 )
 
+# max_tokens is an OUTPUT CAP, not spend — a normal article generates far less, so
+# raising it costs nothing for them. It must be big enough to echo a full «...»
+# restatement verbatim: at 1500 a large block (e.g. ν.5086 art.34 -> ν.4368/2016
+# #αρ.90.παρ.7.περ.γ, 6k+ chars) was truncated mid-string, json.loads failed, and
+# the whole article's amendments were silently dropped.
+_AMEND_MAX_TOKENS = 8000
+
+# Salvage prompt: if the verbatim-echo call STILL truncates (an unusually large
+# replacement block), re-ask for the edit STRUCTURE ONLY so the edge — action +
+# target, the critical graph fact — is captured even when the full text won't fit.
+# The replacement wording already lives in this provision's own chunk_text.
+_SYSTEM_NOECHO = _SYSTEM + (
+    " OVERRIDE: set every \"new_text\" to an empty string \"\" and do NOT echo the "
+    "replacement wording — capture only action, scope and the target locator."
+)
+
+
+def _call_json(complete: Callable[..., str], system: str, text: str,
+               max_tokens: int):
+    """One LLM call -> parsed dict, or None when the JSON is unparseable (the
+    truncation signature). complete()'s own exceptions (incl. SystemExit for a
+    missing key) propagate so the caller can fall back."""
+    out = complete(system, text, want_json=True, max_tokens=max_tokens)
+    try:
+        return json.loads(out)
+    except Exception:                               # noqa: BLE001 — truncated/invalid
+        return None
+
+
 
 def _nz(v) -> str:
     """Normalize an LLM-supplied locator field to a clean string.
@@ -145,13 +174,22 @@ def extract_amendments_llm(law: Law,
         if not any(stem in text for stem in _AMEND_STEMS):
             continue                                # cheap gate: no verb, skip
         try:
-            out = complete(_SYSTEM, text, want_json=True, max_tokens=1500)
-            data = json.loads(out)
+            data = _call_json(complete, _SYSTEM, text, _AMEND_MAX_TOKENS)
+            if data is None:                        # truncated/invalid JSON
+                log.warning("amend_llm %s art %s: JSON unparseable (a replacement "
+                            "block likely overran the token cap); retrying "
+                            "structure-only so the edge is not lost",
+                            law.instrument_id, p.article_no)
+                data = _call_json(complete, _SYSTEM_NOECHO, text, 1500)
         except SystemExit:
             raise                                   # no key -> let caller fall back
         except Exception as e:                      # noqa: BLE001
             log.warning("amend extract failed on %s art %s: %s",
                         law.instrument_id, p.article_no, e)
+            continue
+        if data is None:                            # echo + structure-only both failed
+            log.warning("amend_llm %s art %s: structure-only retry also failed; "
+                        "skipping", law.instrument_id, p.article_no)
             continue
 
         for a in (data.get("amendments") or []):

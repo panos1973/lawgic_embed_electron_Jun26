@@ -307,9 +307,18 @@ def _clean_amendments(ops: list, own: str) -> list:
     for op in ops:
         tid = op.target_id or ""
         nt = (op.new_text or "").strip()
-        # 0. text-bearing op with no real replacement body (heading/banner/empty)
-        if op.op in _TEXT_OPS and _is_heading_only(nt):
-            continue
+        # 0. text-bearing op with no usable replacement body:
+        #    - EMPTY new_text: keep ONLY if it carries a pinpoint #αρ. target — that
+        #      is a genuine edit whose replacement text we could not capture (e.g. a
+        #      restatement too large to echo, recovered structure-only); the edge
+        #      (action + target) is the graph fact. With no target it is pure noise.
+        #    - a non-empty all-caps banner / ΚΕΦΑΛΑΙΟ heading is always noise.
+        if op.op in _TEXT_OPS:
+            if not nt:
+                if not _has_article(tid):
+                    continue
+            elif _is_heading_only(nt):
+                continue
         if not _has_article(tid):
             # 1. self-referential document dump targeting the enacting law
             if tid == own or tid.startswith(own + "#"):

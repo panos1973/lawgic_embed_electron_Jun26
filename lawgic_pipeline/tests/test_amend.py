@@ -190,25 +190,43 @@ def test_clean_drops_self_dumps_and_fragments_keeps_real():
     assert tids == ["ν.4763/2020#αρ.40Α", "ν.4186/2013#αρ.9"]
 
 
-def test_clean_drops_heading_only_and_empty_new_text():
-    """Real v1.1.0 noise: text-bearing edits whose quoted span is a bare heading
-    or empty must be dropped, even when they carry a precise #αρ. target."""
+def test_clean_drops_heading_banners_but_keeps_empty_text_with_precise_target():
+    """A NON-EMPTY heading/banner quoted-span is noise and is dropped. But an EMPTY
+    new_text WITH a pinpoint #αρ. target is a genuine edit whose replacement text we
+    couldn't capture (e.g. a restatement too large to echo, recovered structure-only,
+    or a no-text validity extension) — its edge (action+target) is the graph fact and
+    must be kept, consistent with how empty 'amends'/'repeals' edges are treated."""
     from pipeline.amend import _clean_amendments
     from models import AmendmentOp
     own = "ν.5082/2024"
     ops = [
         AmendmentOp(op="adds", target_id="ν.4763/2020#αρ.40Ι", scope="article",
-                    new_text="Κεφάλαιο ΣΤ2", resolved=True),               # heading insert
+                    new_text="Κεφάλαιο ΣΤ2", resolved=True),               # heading insert -> drop
         AmendmentOp(op="adds", target_id="ν.4763/2020#αρ.40Α", scope="article",
                     new_text="ΚΕΝΤΡΑ ΕΠΑΓΓΕΛΜΑΤΙΚΗΣ ΕΚΠΑΙΔΕΥΣΗΣ ΚΑΙ ΚΑΤΑΡΤΙΣΗΣ",
-                    resolved=True),                                         # all-caps banner
-        AmendmentOp(op="adds", target_id="ν.4763/2020#αρ.40Ι.παρ.3", scope="paragraph",
-                    new_text="", resolved=True),                            # empty
+                    resolved=True),                                         # all-caps banner -> drop
+        AmendmentOp(op="replaces", target_id="ν.4368/2016#αρ.90.παρ.7.περ.γ",
+                    scope="case", new_text="", resolved=True),              # empty + precise -> KEEP
         AmendmentOp(op="replaces", target_id="ν.4186/2013#αρ.9", scope="article",
                     new_text="Άρθρο 9 Πρόγραμμα σπουδών. 1. Τα προγράμματα.",
-                    resolved=True),                                         # real (lower-case body)
+                    resolved=True),                                         # real -> keep
     ]
     out = _clean_amendments(ops, own)
+    assert [o.target_id for o in out] == [
+        "ν.4368/2016#αρ.90.παρ.7.περ.γ", "ν.4186/2013#αρ.9"]
+
+
+def test_clean_still_drops_empty_text_without_a_target():
+    """An empty/heading text op with NO precise #αρ. target stays noise -> dropped."""
+    from pipeline.amend import _clean_amendments
+    from models import AmendmentOp
+    ops = [
+        AmendmentOp(op="adds", target_id="ν.4763/2020", scope="document",
+                    new_text="", resolved=False),                           # empty, no article
+        AmendmentOp(op="replaces", target_id="ν.4186/2013#αρ.9", scope="article",
+                    new_text="Άρθρο 9 Πρόγραμμα σπουδών. 1. Τα προγράμματα.", resolved=True),
+    ]
+    out = _clean_amendments(ops, "ν.5082/2024")
     assert [o.target_id for o in out] == ["ν.4186/2013#αρ.9"]
 
 
