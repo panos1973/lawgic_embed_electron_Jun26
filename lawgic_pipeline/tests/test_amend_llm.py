@@ -83,24 +83,39 @@ def test_source_id_records_the_amending_article_of_this_law():
 
 
 def test_diamorfonetai_restatement_collapses_to_full_text():
-    # the "διαμορφώνεται ως εξής" pattern: a micro-edit + the full restated paragraph
-    # arrive as two edges on the SAME target. The restatement subsumes the micro-edit,
-    # so they collapse to ONE edge carrying the full text (not two conflicting ones).
-    full = "1. " + ("Για την κάλυψη της ευθύνης ο φορέας υποχρεούται να συνάψει ασφάλιση. " * 4)
-    law = _law("Στην παρ. 1 του άρθρου 11 του ν. 4508/2017 προστίθεται φράση και η "
-               "παρ. 1 διαμορφώνεται ως εξής: «...»")
+    # "διαμορφώνεται ως εξής": a VERBATIM micro-edit + the full restated paragraph
+    # that CONTAINS it -> one edge (the restatement). Modeled on the real
+    # ν.4934/2022 art 22 §4 case found in the cluster (short restatement, 74 chars).
+    law = _law("Στην παρ. 4 του άρθρου 22 του ν. 4934/2022 η φράση «εκκινεί την "
+               "31η.12.2023» αντικαθίσταται και η παρ. 4 διαμορφώνεται ως εξής: «...»")
     extract_amendments_llm(law, complete=_fake({"amendments": [
-        {"action": "adds", "scope": "phrase", "target_law_number": "4508/2017",
-         "target_article_number": "11", "target_paragraph": "1",
-         "new_text": "προστίθεται η λέξη «ιδίως» μετά τη φράση «δημόσιο συμφέρον» "
-                     "στο δεύτερο εδάφιο της παραγράφου."},
-        {"action": "replaces", "scope": "paragraph", "target_law_number": "4508/2017",
-         "target_article_number": "11", "target_paragraph": "1", "new_text": full},
+        {"action": "replaces", "scope": "phrase", "target_law_number": "4934/2022",
+         "target_article_number": "22", "target_paragraph": "4",
+         "new_text": "εκκινεί την 30ή.9.2024"},
+        {"action": "amends", "scope": "paragraph", "target_law_number": "4934/2022",
+         "target_article_number": "22", "target_paragraph": "4",
+         "new_text": "4. Η παραγωγική λειτουργία της ως άνω πλατφόρμας εκκινεί την 30ή.9.2024."},
     ]}))
-    assert len(law.amendments) == 1                       # collapsed, not two
+    assert len(law.amendments) == 1                       # micro subsumed by restatement
     op = law.amendments[0]
-    assert op.target_id == "ν.4508/2017#αρ.11.παρ.1"
-    assert op.op == "replaces" and len(op.new_text) >= 150   # the full restatement kept
+    assert op.target_id == "ν.4934/2022#αρ.22.παρ.4"
+    assert "παραγωγική λειτουργία" in (op.new_text or "")  # the full restatement kept
+
+
+def test_redundant_empty_amends_edge_dropped():
+    # a bare "amends" with empty new_text is contentless; when a sibling on the SAME
+    # target carries the real text it is dropped (the spurious art-24 edge in the
+    # cluster). repeals/renumbers with empty new_text are NOT affected.
+    law = _law("Στην παρ. 4 του άρθρου 22 του ν. 4934/2022 διαμορφώνεται ως εξής: «4. …»")
+    extract_amendments_llm(law, complete=_fake({"amendments": [
+        {"action": "amends", "scope": "paragraph", "target_law_number": "4934/2022",
+         "target_article_number": "22", "target_paragraph": "4", "new_text": ""},
+        {"action": "replaces", "scope": "paragraph", "target_law_number": "4934/2022",
+         "target_article_number": "22", "target_paragraph": "4",
+         "new_text": "4. Η παραγωγική λειτουργία εκκινεί την 30ή.9.2024."},
+    ]}))
+    assert len(law.amendments) == 1
+    assert law.amendments[0].op == "replaces" and law.amendments[0].new_text
 
 
 def test_distinct_short_edits_to_same_target_are_kept():
