@@ -261,6 +261,33 @@ def _collapse_restatements(ops: list) -> list:
     return [op for op in ops if id(op) not in drop]
 
 
+def _drop_contradicted_repeals(ops: list) -> list:
+    """Drop a phantom 'repeals' that contradicts a restatement by the SAME article.
+
+    When one amending article carries BOTH a bare 'repeals' (no new_text) AND a
+    text-bearing edit (replaces/adds/amends/…) of the SAME target provision, the
+    provision is being rewritten, not deleted — the Greek idiom «καταργείται και
+    αντικαθίσταται ως εξής: «…»» is a replacement. The LLM sometimes emits the
+    repeal verb as a separate edge; left in, it falsely flips the provision's
+    legal_force_status to 'repealed'. Scoped to a shared (source_id, target_id) so
+    two genuinely distinct legislative acts on the same target are never merged.
+    Real standalone repeals (no sibling restatement) are kept.
+    """
+    restated = {                                          # (source, target) rewritten in place
+        (op.source_id, op.target_id)
+        for op in ops
+        if op.source_id and op.target_id
+        and op.op in _CONTENTFUL_OPS and _unquote(op.new_text)
+    }
+    drop = {
+        id(op) for op in ops
+        if op.op == "repeals" and not _unquote(op.new_text)
+        and op.source_id and op.target_id
+        and (op.source_id, op.target_id) in restated
+    }
+    return [op for op in ops if id(op) not in drop]
+
+
 def _clean_amendments(ops: list, own: str) -> list:
     """Drop noise edges and de-duplicate, preserving order.
 
@@ -297,7 +324,7 @@ def _clean_amendments(ops: list, own: str) -> list:
             continue
         seen.add(key)
         out.append(op)
-    return _collapse_restatements(out)
+    return _drop_contradicted_repeals(_collapse_restatements(out))
 
 
 def consolidate(law: Law) -> Law:
