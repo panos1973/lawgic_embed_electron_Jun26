@@ -78,6 +78,28 @@ def test_full_spine_processes_to_done(fek_pdf, tmp_path, monkeypatch):
         assert stage in events
 
 
+def test_fatal_credential_error_stops_and_requeues(fek_pdf, tmp_path, monkeypatch):
+    """A wrong/expired API key (auth error) during embed must raise FatalIngestError
+    and leave the doc 'pending' (resumable) — NOT mark it 'error' and continue."""
+    import orchestrator
+    import voyage_embed as ve
+    from errors import FatalIngestError
+    from state import State
+
+    def _auth_boom(chunks, progress=None):
+        raise Exception("AuthenticationError: invalid api key (401)")
+    monkeypatch.setattr(ve, "embed_law_chunks", _auth_boom)
+
+    st = State(str(tmp_path / "state.db"))
+    with pytest.raises(FatalIngestError) as ei:
+        orchestrator.process_document(client=object(), st=st, path=fek_pdf)
+    assert ei.value.provider == "Voyage" and "embed" in ei.value.stage
+    counts = st.counts()
+    st.close()
+    # released for resume, never marked 'error'
+    assert counts.get("pending") == 1 and not counts.get("error")
+
+
 def test_unidentifiable_pdf_routes_to_review(tmp_path, monkeypatch):
     """A PDF with no parseable masthead must go to review, not invent an id."""
     import orchestrator

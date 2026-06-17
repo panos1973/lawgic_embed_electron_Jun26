@@ -399,7 +399,10 @@ def enrich_llm(law: Law, progress=None) -> Law:
                 if progress:
                     progress("no LLM key — skipping enrichment")
                 return law        # no API key configured — skip enrichment
-            except Exception:
+            except Exception as e:
+                from errors import looks_fatal
+                if looks_fatal(e):
+                    raise         # WRONG key/endpoint -> stop the run, don't swallow
                 continue          # bad JSON / transient error -> retry once
         if data is None:
             continue              # one bad provision shouldn't fail the law
