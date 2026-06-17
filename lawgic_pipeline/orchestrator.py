@@ -121,6 +121,10 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
     emit("enrich", f"{law.instrument_id}: LLM enrichment ({len(law.provisions)} provisions)")
     law = _stage(f"LLM ({config.LLM_PROVIDER})", "enrich (summaries)",
                  lambda: enrich.enrich_llm(law, progress=lambda m: emit("enrich", m)))
+    # whole-law overview synthesized from the article summaries -> document node only
+    # (not per-chunk vectors). Cheap (one small call); deterministic fallback w/o key.
+    law = _stage(f"LLM ({config.LLM_PROVIDER})", "summarize (document)",
+                 lambda: enrich.summarize_law(law))
     chunks = law.ordered_texts()
     emit("embed", f"{law.instrument_id}: embedding {len(chunks)} chunk(s)")
     log.info("embed %s: %d chunk(s)", law.instrument_id, len(chunks))

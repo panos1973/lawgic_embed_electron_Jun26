@@ -139,6 +139,7 @@ class Law:
     instrument_type: str
     title: str = ""
     document_category: str = ""   # function taxonomy: NOMOS_AMENDMENT, PD_REGULATORY, ...
+    summary: str = ""             # whole-law overview (document node only; NOT per-chunk)
     fek_series: str = ""
     fek_number: str = ""
     fek_date: str = ""

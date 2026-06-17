@@ -457,6 +457,11 @@ try:
             Property(name="title", description="Document title (Greek)",
                      data_type=DataType.TEXT, tokenization=Tokenization.WORD,
                      index_searchable=True),
+            Property(name="document_summary",
+                     description="Whole-law overview (3-5 sentences); generated once, "
+                                 "stored here only — NOT prepended to per-chunk vectors",
+                     data_type=DataType.TEXT, tokenization=Tokenization.TRIGRAM,
+                     index_searchable=True),
             Property(name="publication_date", description="FEK publication date (RFC3339)",
                      data_type=DataType.DATE, index_filterable=True, index_range_filters=True),
             Property(name="effective_date", description="When law takes effect (RFC3339)",

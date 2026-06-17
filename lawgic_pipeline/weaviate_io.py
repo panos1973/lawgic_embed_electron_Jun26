@@ -276,6 +276,7 @@ def load_document(client, law: Law, tenant: str = None):
         "document_type": law.instrument_type,
         "document_category": law.document_category or None,
         "title": law.title,
+        "document_summary": law.summary or None,
         "publication_date": _rfc3339(law.fek_date),
         "legal_force_status": "in_force",
         "fek_type": law.fek_series or None,

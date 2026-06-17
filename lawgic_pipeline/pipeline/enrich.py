@@ -420,3 +420,52 @@ def enrich_llm(law: Law, progress=None) -> Law:
         p.domain_dkn = list(dict.fromkeys(p.domain_dkn + canon))
         p.keywords = list(dict.fromkeys((kw or p.keywords) + noncanon)) or p.keywords
     return law
+
+
+# Whole-law overview, synthesized ONCE from the per-article summaries. Stored on the
+# document node only (NOT prepended to per-chunk vectors — voyage-context-3 already
+# embeds each chunk with whole-law context, so gluing a summary on every chunk would
+# only blur precision).
+_LAW_SUMMARY_SYSTEM = (
+    "You are a Greek legal analyst. From the law's title and the per-article "
+    "summaries in the user message, write a concise 3-5 sentence Greek overview of "
+    "what the whole law does: its purpose, the main subject areas it covers, and any "
+    "notable measures. Return ONLY the overview text — no JSON, no headings, no preamble."
+)
+
+
+def _law_summary_fallback(law: Law) -> str:
+    """Deterministic overview when no LLM key / no article summaries exist."""
+    base = (law.title or law.instrument_id).strip()
+    n = sum(1 for p in law.provisions if p.chunk_type == "article")
+    bits = [b for b in (law.document_category, f"{n} άρθρα" if n else "") if b]
+    return f"{base} — {', '.join(bits)}" if bits else base
+
+
+def summarize_law(law: Law, complete=None) -> Law:
+    """Populate law.summary with a whole-law overview (document node only).
+
+    Synthesizes from the per-article summaries enrich_llm produced — a small, cheap
+    call, not a re-read of the full law. Falls back to a deterministic line without
+    an LLM key (so the field is never empty); a WRONG key still raises (fatal)."""
+    parts = [(p.chunk_summary or "").strip()
+             for p in law.provisions
+             if p.chunk_type in ("article", "section") and (p.chunk_summary or "").strip()]
+    if not parts:
+        law.summary = _law_summary_fallback(law)[:1200]
+        return law
+    if complete is None:
+        complete = llm.complete
+    user = (f"Τίτλος: {law.title}\nΚατηγορία: {law.document_category}\n\n"
+            "Περίληψη ανά άρθρο:\n" + "\n".join(f"- {s}" for s in parts[:60]))
+    try:
+        out = complete(_LAW_SUMMARY_SYSTEM, user, want_json=False, max_tokens=400)
+        law.summary = (out or "").strip() or _law_summary_fallback(law)[:1200]
+    except SystemExit:
+        law.summary = _law_summary_fallback(law)[:1200]      # no key -> deterministic
+    except Exception as e:                                   # noqa: BLE001
+        from errors import looks_fatal
+        if looks_fatal(e):
+            raise                                            # wrong key/endpoint -> stop
+        law.summary = _law_summary_fallback(law)[:1200]      # transient -> fallback
+    return law

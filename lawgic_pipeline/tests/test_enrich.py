@@ -162,6 +162,59 @@ def test_enrich_llm_gives_up_after_two_failures():
     assert law.provisions[0].chunk_summary == ""  # stayed empty, no crash
 
 
+def _law_with_summaries(*summaries, title="Νόμος δοκιμής", cat="NOMOS_SUBSTANTIVE"):
+    law = Law(instrument_id="ν.5090/2024", instrument_key="N5090/2024",
+              instrument_type=TYPE_NOMOS, title=title, document_category=cat)
+    for i, s in enumerate(summaries, 1):
+        law.provisions.append(Provision(
+            canonical_id=f"ν.5090/2024#αρ.{i}", instrument_id="ν.5090/2024",
+            instrument_key="N5090/2024", instrument_type=TYPE_NOMOS,
+            article_no=str(i), text_in_force="…", chunk_type="article",
+            chunk_summary=s))
+    return law
+
+
+def test_summarize_law_synthesizes_from_article_summaries():
+    from pipeline.enrich import summarize_law
+    law = _law_with_summaries("Το άρθρο 1 ορίζει τον σκοπό.", "Το άρθρο 2 συστήνει αρχή.")
+    seen = {}
+
+    def fake(system, user, want_json=True, max_tokens=400):
+        seen["json"] = want_json
+        seen["user"] = user
+        return "Ο νόμος ορίζει τον σκοπό και συστήνει αρχή."
+
+    summarize_law(law, complete=fake)
+    assert law.summary == "Ο νόμος ορίζει τον σκοπό και συστήνει αρχή."
+    assert seen["json"] is False                      # prose overview, not JSON
+    assert "Το άρθρο 1" in seen["user"]               # built FROM the article summaries
+
+
+def test_summarize_law_deterministic_fallback_without_article_summaries():
+    from pipeline.enrich import summarize_law
+    law = _law_with_summaries("")                     # provision present but no summary
+    calls = {"n": 0}
+
+    def fake(*a, **k):
+        calls["n"] += 1
+        return "unused"
+
+    summarize_law(law, complete=fake)
+    assert calls["n"] == 0                             # nothing to synthesize -> no call
+    assert "Νόμος δοκιμής" in law.summary and "NOMOS_SUBSTANTIVE" in law.summary
+
+
+def test_summarize_law_falls_back_without_llm_key():
+    from pipeline.enrich import summarize_law
+    law = _law_with_summaries("Το άρθρο 1 ορίζει κάτι.")
+
+    def no_key(*a, **k):
+        raise SystemExit("no LLM key")
+
+    summarize_law(law, complete=no_key)               # must not crash
+    assert law.summary.startswith("Νόμος δοκιμής")    # deterministic fallback used
+
+
 def test_consumer_protection_law_maps_to_commercial():
     # ν.2251/1994 (consumer protection) + market-control text must classify as
     # 'commercial' (and thus ΔΚΝ ΕΜΠΟΡΙΚΗ ΝΟΜΟΘΕΣΙΑ) — the αρ.38 price-rationalisation
