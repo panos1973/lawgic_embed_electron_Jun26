@@ -37,10 +37,21 @@ JSON = False
 _EMIT_LOCK = threading.Lock()   # serialize stdout writes across worker threads
 
 
+def _json_default(o):
+    """Make Weaviate values JSON-safe. DATE properties come back from the client as
+    Python datetime objects (and the odd uuid/Decimal), which json.dumps cannot
+    encode — that crashed the inspect/Browse path. Dates -> ISO string; anything
+    else -> str (never let a stray type kill the JSON event stream)."""
+    import datetime as _dt
+    if isinstance(o, (_dt.datetime, _dt.date, _dt.time)):
+        return o.isoformat()
+    return str(o)
+
+
 def emit(obj: dict):
     if JSON:
         obj.setdefault("ts", time.strftime("%H:%M:%S"))   # event time for the UI log
-        line = json.dumps(obj, ensure_ascii=False) + "\n"
+        line = json.dumps(obj, ensure_ascii=False, default=_json_default) + "\n"
         with _EMIT_LOCK:
             try:
                 sys.stdout.write(line)
