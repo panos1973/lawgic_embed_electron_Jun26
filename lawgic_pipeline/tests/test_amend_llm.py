@@ -82,6 +82,41 @@ def test_source_id_records_the_amending_article_of_this_law():
     assert op.target_id == "ν.4412/2016#αρ.5"      # ... altering art.5 of the older law
 
 
+def test_diamorfonetai_restatement_collapses_to_full_text():
+    # the "διαμορφώνεται ως εξής" pattern: a micro-edit + the full restated paragraph
+    # arrive as two edges on the SAME target. The restatement subsumes the micro-edit,
+    # so they collapse to ONE edge carrying the full text (not two conflicting ones).
+    full = "1. " + ("Για την κάλυψη της ευθύνης ο φορέας υποχρεούται να συνάψει ασφάλιση. " * 4)
+    law = _law("Στην παρ. 1 του άρθρου 11 του ν. 4508/2017 προστίθεται φράση και η "
+               "παρ. 1 διαμορφώνεται ως εξής: «...»")
+    extract_amendments_llm(law, complete=_fake({"amendments": [
+        {"action": "adds", "scope": "phrase", "target_law_number": "4508/2017",
+         "target_article_number": "11", "target_paragraph": "1",
+         "new_text": "προστίθεται η λέξη «ιδίως» μετά τη φράση «δημόσιο συμφέρον» "
+                     "στο δεύτερο εδάφιο της παραγράφου."},
+        {"action": "replaces", "scope": "paragraph", "target_law_number": "4508/2017",
+         "target_article_number": "11", "target_paragraph": "1", "new_text": full},
+    ]}))
+    assert len(law.amendments) == 1                       # collapsed, not two
+    op = law.amendments[0]
+    assert op.target_id == "ν.4508/2017#αρ.11.παρ.1"
+    assert op.op == "replaces" and len(op.new_text) >= 150   # the full restatement kept
+
+
+def test_distinct_short_edits_to_same_target_are_kept():
+    # guard: two SHORT edits to the same target with NO full restatement must NOT be
+    # collapsed (we'd lose a genuine edit). Both are kept.
+    law = _law("Στο άρθρο 5 του ν. 4412/2016 η λέξη Α αντικαθίσταται από Β και "
+               "προστίθεται εδάφιο.")
+    extract_amendments_llm(law, complete=_fake({"amendments": [
+        {"action": "replaces", "scope": "phrase", "target_law_number": "4412/2016",
+         "target_article_number": "5", "new_text": "η λέξη «Α» αντικαθίσταται από «Β»."},
+        {"action": "adds", "scope": "phrase", "target_law_number": "4412/2016",
+         "target_article_number": "5", "new_text": "προστίθεται νέο τρίτο εδάφιο σύντομο."},
+    ]}))
+    assert len(law.amendments) == 2                       # both short -> both kept
+
+
 def test_multi_target_split_into_two_ops():
     law = _law("Οι παρ. 8 και 9 του άρθρου 64 του ν. 4172/2013 "
                "αντικαθίστανται ως εξής: «8. … 9. …»")

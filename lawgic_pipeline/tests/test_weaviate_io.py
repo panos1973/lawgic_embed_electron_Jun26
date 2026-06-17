@@ -177,6 +177,20 @@ def test_load_amendments_records_real_extraction_method():
     assert c.sink["Jun2026Amendment"][0]["props"]["extraction_method"] == "llm:deepseek"
 
 
+def test_load_law_denormalizes_amends_provisions_from_source_id():
+    # the source article's flat record should list WHAT it amends (from edge.source_id),
+    # so a hit on it shows the relationship without a graph traversal.
+    law = _law()                                   # provision ν.5090/2024#αρ.1
+    law.amendments.append(AmendmentOp(
+        op="replaces", target_id="ν.4675/2024#αρ.24", scope="article",
+        new_text="νέο", resolved=False, sub_edit_ordinal="0",
+        source_id="ν.5090/2024#αρ.1"))
+    c = _FakeClient()
+    wio.load_law(c, law, [[0.0] * 4])
+    flat = c.sink["Jun2026GRLegaDocs"][0]["props"]
+    assert flat["amends_provisions"] == ["ν.4675/2024#αρ.24:replaces"]
+
+
 def test_flat_and_article_write_bm25_fields():
     """The Greek BM25 recall fields must be populated on BOTH search collections,
     under the exact names the schema declares (text_normalized / text_stemmed +

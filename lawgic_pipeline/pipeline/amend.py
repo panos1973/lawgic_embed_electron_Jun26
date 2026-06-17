@@ -213,6 +213,35 @@ def _is_heading_only(nt: str) -> bool:
     return False
 
 
+# A new_text at least this long is a full provision RESTATEMENT ("…διαμορφώνεται ως
+# εξής: «[whole paragraph/article]»"), not a phrase/word micro-edit.
+_RESTATEMENT_MIN = 150
+
+
+def _collapse_restatements(ops: list) -> list:
+    """Collapse the "διαμορφώνεται ως εξής" artifact: a micro-edit AND the full
+    restated provision arrive as two edges on the SAME target (e.g. adds «, ιδίως,»
+    + replaces «[full paragraph]»). The restatement already contains the micro-edit,
+    so when a real restatement is present keep only the fullest-text edge per target
+    and drop the redundant micro-edits. If a target's edges are all short (no
+    restatement), keep them ALL so genuine distinct edits are never lost. Order kept.
+    """
+    groups: dict[str, list] = {}
+    for op in ops:
+        groups.setdefault(op.target_id or "", []).append(op)
+    drop: set[int] = set()
+    for tid, grp in groups.items():
+        if not tid or len(grp) < 2:
+            continue
+        longest = max(grp, key=lambda o: len(o.new_text or ""))
+        if len(longest.new_text or "") < _RESTATEMENT_MIN:
+            continue                          # all short -> no restatement; keep all
+        for op in grp:
+            if op is not longest:
+                drop.add(id(op))
+    return [op for op in ops if id(op) not in drop]
+
+
 def _clean_amendments(ops: list, own: str) -> list:
     """Drop noise edges and de-duplicate, preserving order.
 
@@ -249,7 +278,7 @@ def _clean_amendments(ops: list, own: str) -> list:
             continue
         seen.add(key)
         out.append(op)
-    return out
+    return _collapse_restatements(out)
 
 
 def consolidate(law: Law) -> Law:

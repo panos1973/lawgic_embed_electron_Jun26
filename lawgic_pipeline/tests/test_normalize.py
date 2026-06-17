@@ -84,6 +84,28 @@ def test_strip_azure_page_comments():
     assert "Η ισχύς αρχίζει." in out and "Άρθρο 42 Επόμενο." in out
 
 
+def test_strip_promulgation_and_signature_trailer():
+    """The closing promulgation order, the ministers' signatures, the Μεγάλη Σφραγίδα
+    attestation and the Εθνικό Τυπογραφείο footer must be stripped — otherwise they
+    pollute the final article ('Έναρξη ισχύος') with names/furniture. The START-of-law
+    enacting formula ('Εκδίδομε…') must be kept (it contains no 'Παραγγέλλομε')."""
+    body = ("Ο ΠΡΟΕΔΡΟΣ ΤΗΣ ΕΛΛΗΝΙΚΗΣ ΔΗΜΟΚΡΑΤΙΑΣ Εκδίδομε τον ακόλουθο νόμο.\n"
+            "Άρθρο 40 Έναρξη ισχύος Η ισχύς αρχίζει από τη δημοσίευση.\n"
+            "ΕΦΗΜΕΡΙΔΑ ΤΗΣ ΚΥΒΕΡΝΗΣΕΩΣ 255\n"
+            "Παραγγέλλομε τη δημοσίευση του παρόντος στην Εφημερίδα της Κυβερνήσεως "
+            "και την εκτέλεσή του ως νόμου του Κράτους.\n"
+            "Αθήνα, 14 Φεβρουαρίου 2024 Η Πρόεδρος της Δημοκρατίας ΚΑΤΕΡΙΝΑ ΣΑΚΕΛΛΑΡΟΠΟΥΛΟΥ\n"
+            "Οι Υπουργοί ΚΩΝΣΤΑΝΤΙΝΟΣ ΧΑΤΖΗΔΑΚΗΣ\n"
+            "Θεωρήθηκε και τέθηκε η Μεγάλη Σφραγίδα του Κράτους.\n"
+            "<figure> ET </figure> # ΕΘΝΙΚΟ ΤΥΠΟΓΡΑΦΕΙΟ")
+    out = strip_furniture(body)
+    assert "Εκδίδομε τον ακόλουθο νόμο" in out            # enacting formula kept
+    assert "Η ισχύς αρχίζει από τη δημοσίευση." in out     # the real article text kept
+    assert "Παραγγέλλομε" not in out
+    assert "ΣΑΚΕΛΛΑΡΟΠΟΥΛΟΥ" not in out and "ΧΑΤΖΗΔΑΚΗΣ" not in out
+    assert "Σφραγίδα" not in out and "ΤΥΠΟΓΡΑΦΕΙΟ" not in out
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     p = 0
