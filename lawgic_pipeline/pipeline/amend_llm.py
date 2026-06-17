@@ -184,7 +184,8 @@ def extract_amendments_llm(law: Law,
                 sub_edit_ordinal=str(ordinal),
                 resolved=bool(target_law is None),  # in-law targets resolve locally
                 extraction_method=method,
-            ))
+                source_id=p.canonical_id,           # WHICH article of THIS (new) law
+            ))                                       # made the edit -> source_*_number
     # Same hygiene pass the deterministic extractor applies: drop heading-only /
     # empty edits, self-document dumps, unresolved fragments, and exact dupes, so
     # both extractors emit the clean edge set consolidate()/the loader expect.

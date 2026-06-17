@@ -309,6 +309,24 @@ def test_loader_props_are_declared_in_schema():
 
 # --- versioned timeline assembly: full in-memory store (all collections) --------
 from weaviate.util import generate_uuid5  # noqa: E402
+import datetime as _dt  # noqa: E402
+
+# Weaviate returns DATE properties as datetime objects, not strings. The fake store
+# keeps what was written (strings), so coerce date fields on READ to mimic the real
+# client — this is what surfaced the consolidate '.strip() on datetime' crash.
+_VDATE_FIELDS = {"effective_date", "publication_date", "valid_from", "valid_to"}
+
+
+def _vread(d):
+    out = dict(d)
+    for f in _VDATE_FIELDS:
+        v = out.get(f)
+        if isinstance(v, str) and len(v) >= 10 and v[4:5] == "-":
+            try:
+                out[f] = _dt.datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+    return out
 
 
 class _VColl:
@@ -362,12 +380,12 @@ class _VColl:
         class Q:
             def fetch_object_by_id(self_, uuid):
                 d = store.get(name, {}).get(uuid)
-                return None if d is None else type("Obj", (), {"properties": d, "uuid": uuid})
+                return None if d is None else type("Obj", (), {"properties": _vread(d), "uuid": uuid})
         return Q()
 
     def iterator(self, **kw):
         for uuid, d in list(self.store.get(self.name, {}).items()):
-            yield type("E", (), {"uuid": uuid, "properties": d})
+            yield type("E", (), {"uuid": uuid, "properties": _vread(d)})
 
 
 class _VClient:
@@ -569,6 +587,21 @@ def test_law_fields_mapping_covers_all_collections():
         "source_law_number", "target_law_number"}
     assert set(wio._law_fields(wio.config.GRAPH_DELEGATION)) == {
         "enabling_law_number", "implementing_law_number"}
+
+
+def test_vf_str_normalizes_datetime_and_strings():
+    import datetime as dt
+    aware = dt.datetime(2024, 2, 14, 0, 0, tzinfo=dt.timezone.utc)
+    # datetime (how Weaviate returns DATE) -> the canonical write-time string
+    assert wio._vf_str(aware) == "2024-02-14T00:00:00Z"
+    # Weaviate's millisecond display form -> same canonical string
+    assert wio._vf_str("2024-02-14T00:00:00.000Z") == "2024-02-14T00:00:00Z"
+    assert wio._vf_str("2024-02-14T00:00:00Z") == "2024-02-14T00:00:00Z"
+    assert wio._vf_str(None) is None and wio._vf_str("") is None
+    # critical: a datetime read-back must produce the SAME version UUID as the
+    # write-time string, or consolidation can't find the base version.
+    assert wio._art_version_uuid("ν.1/2024#αρ.5", wio._vf_str(aware)) == \
+        wio._art_version_uuid("ν.1/2024#αρ.5", "2024-02-14T00:00:00Z")
 
 
 if __name__ == "__main__":
