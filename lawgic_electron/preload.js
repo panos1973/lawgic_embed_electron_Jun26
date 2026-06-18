@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('api', {
   resetCollection: (key) => ipcRenderer.invoke('collections:reset', key),
   listLaws: () => ipcRenderer.invoke('laws:list'),
   inspectLaw: (collection, law) => ipcRenderer.invoke('law:inspect', { collection, law }),
+  consolidate: () => ipcRenderer.invoke('timeline:consolidate'),
+  graphStatus: () => ipcRenderer.invoke('graph:status'),
+  provisionHistory: (law, article) => ipcRenderer.invoke('provision:history', { law, article }),
   onPipelineEvent: (cb) => ipcRenderer.on('pipeline:event', (_e, o) => cb(o)),
   onPipelineDone: (cb) => ipcRenderer.on('pipeline:done', (_e, o) => cb(o)),
 });

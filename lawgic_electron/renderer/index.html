@@ -31,6 +31,7 @@
     <button class="tab active" data-tab="ingest">Ingest</button>
     <button class="tab" data-tab="review">Review<span class="badge" id="reviewBadge"></span></button>
     <button class="tab" data-tab="browse">Browse</button>
+    <button class="tab" data-tab="timeline">Timeline</button>
     <button class="tab" data-tab="settings">Settings</button>
   </nav>
 
@@ -113,6 +114,52 @@
       </div>
       <div class="panel">
         <div class="browse-results" id="browseResults"><div class="empty">— nothing loaded —</div></div>
+      </div>
+    </section>
+
+    <!-- TIMELINE / CHAIN QA -->
+    <section id="timeline" class="view">
+      <div class="panel">
+        <div class="panel-title">Rebuild timeline</div>
+        <p class="hint">Folds amendment edges into versioned article history
+          (<code>valid_from</code> / <code>valid_to</code> / <code>is_current</code>). Ingest already
+          runs this automatically after each batch — use this to re-run it on demand, e.g. after
+          backfilling older laws so previously-pending edges resolve. Re-embeds amended text, so it
+          needs the Voyage key.</p>
+        <div class="row">
+          <button class="btn primary" id="runConsolidate">Rebuild timeline</button>
+          <span class="saved" id="consolidateNote"></span>
+        </div>
+        <pre id="consolidateOut" class="diag-out" hidden></pre>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Chain health</div>
+        <p class="hint">QA on the amendment graph: how many edges resolve to a target law that is
+          present, how many are dangling (target law not ingested yet), unresolved (no canonical
+          target), or undated. Read-only.</p>
+        <div class="row">
+          <button class="btn" id="runGraphStatus">Check chain health</button>
+          <span class="saved" id="graphNote"></span>
+        </div>
+        <pre id="graphOut" class="diag-out" hidden></pre>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Provision history</div>
+        <p class="hint">Full timeline of one provision — the amendment edges that target it (who
+          changed it, when) merged with its text versions (the wording at each stage).</p>
+        <div class="row">
+          <label class="inline">Law number
+            <input id="historyLaw" list="lawOptions" placeholder="e.g. 4619/2019" />
+          </label>
+          <label class="inline">Article
+            <input id="historyArticle" placeholder="e.g. 5" />
+          </label>
+          <button class="btn primary" id="runHistory">Trace history</button>
+          <span class="saved" id="historyNote"></span>
+        </div>
+        <div id="historyOut" class="browse-results"><div class="empty">— nothing loaded —</div></div>
       </div>
     </section>
 
