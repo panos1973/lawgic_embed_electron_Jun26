@@ -103,8 +103,14 @@ def split_acts(text: str, masthead: dict) -> list[ActSegment]:
                            title=(masthead or {}).get("title", ""), text=text,
                            is_decision=False)]
 
-    # Decision issue: split on Αριθμ. act headers.
-    heads = list(_ACT_HEAD.finditer(text))
+    # Decision issue: split on Αριθμ. act headers. A real act number always carries
+    # a DIGIT ("10511", "Φ.1413/ΑΣ6519", "12/101", "Ε-142/2025"); a spelled-out
+    # heading such as "Αριθμός Εισακτέων" / "Αριθμός Φοιτητών" / "Αριθμός Μαθημάτων"
+    # does NOT — and the header regex (Αριθ|Αριθμ|Αριθμός) would otherwise treat it
+    # as an act header, truncating the real act and dropping everything after it
+    # (silent content loss on long, multi-page decisions). Require a digit.
+    heads = [h for h in _ACT_HEAD.finditer(text)
+             if any(ch.isdigit() for ch in (h.group("num") or ""))]
     # Keep only headers that have an issuer within their window — filters out
     # stray "αριθμ." references in body text.
     acts = []

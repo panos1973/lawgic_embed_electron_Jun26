@@ -9,6 +9,35 @@ from models import (make_decision_id, make_decision_key, TYPE_NOMOS, TYPE_YA,  #
                     TYPE_KYA, TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD,
                     TYPE_KANAP)
 
+
+# regression: a spelled "Αριθμός <word>" heading (NO digit) must NOT be read as an
+# act header — it once matched, truncated the real act, and dropped everything after
+# it (Β΄734/2025 lost Άρθρα 7-20 + tables: 6 chunks instead of 25).
+ARITHMOS_WORD = """ΠΕΡΙΕΧΟΜΕΝΑ
+ΑΠΟΦΑΣΕΙΣ
+Αριθμ. 10511
+Ίδρυση Π.Μ.Σ. «Δοκιμή».
+Η ΣΥΓΚΛΗΤΟΣ
+Έχοντας υπόψη τις διατάξεις αποφασίζει:
+Άρθρο 1
+Γενικά.
+Άρθρο 7
+Αριθμός Εισακτέων
+Ο αριθμός εισακτέων ορίζεται σε δεκαπέντε (15).
+Άρθρο 8
+Λοιπές διατάξεις.
+"""
+
+
+def test_arithmos_word_heading_is_not_an_act_header():
+    mh = {"instrument_type": None, "fek_series": "Β", "fek_number": "734", "year": 2025}
+    acts = split_acts(ARITHMOS_WORD, mh)
+    assert len(acts) == 1                              # NOT split at "Αριθμός Εισακτέων"
+    a = acts[0]
+    assert a.instrument_type == TYPE_APOF_NPDD         # Η ΣΥΓΚΛΗΤΟΣ
+    # nothing after the false header is dropped — Άρθρο 8 still inside the act text
+    assert "Αριθμός Εισακτέων" in a.text and "Άρθρο 8" in a.text
+
 MULTI = """ΠΕΡΙΕΧΟΜΕΝΑ
 ΑΠΟΦΑΣΕΙΣ
 1 Πρώτη απόφαση.
