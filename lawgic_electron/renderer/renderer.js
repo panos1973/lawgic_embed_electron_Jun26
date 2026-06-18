@@ -90,9 +90,12 @@ window.api.onPipelineEvent((o) => {
       $('progressLabel').textContent = `0 / ${total}`;
       logLine({ stage: 'scan', doc: `${o.total} files`, msg: o.folder, ts: o.ts });
       break;
-    case 'doc_start':
-      $('progressLabel').textContent = `${o.index} / ${o.total} — ${o.doc}`;
+    case 'doc_start': {
+      const pos = o.index ? `${o.index} / ${o.total}` : (o.total ? `· / ${o.total}` : '');
+      $('progressLabel').textContent = `${pos}${pos ? ' — ' : ''}${o.doc}`;
+      logLine({ stage: 'start', doc: o.doc, msg: '', ts: o.ts });
       break;
+    }
     case 'stage':
       logLine({ stage: o.stage, doc: o.doc, msg: o.msg, ts: o.ts });
       break;

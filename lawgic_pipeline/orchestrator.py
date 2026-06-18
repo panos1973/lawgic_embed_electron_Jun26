@@ -7,6 +7,7 @@ the spine, state tracking and idempotency are real.
 from __future__ import annotations
 import hashlib
 import os
+from collections import Counter
 from typing import Callable, Optional
 
 import config
@@ -86,8 +87,17 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
     """Run the full per-instrument spine for one act. Returns (status, law)."""
     law = _build_law(seg, mh)
     if law is None:
+        # say WHY it could not be identified — the missing field is what the
+        # operator needs to see in the log (vs a bare "could not be identified").
+        emit("review", "act not identified — "
+             f"type={seg.instrument_type or mh.get('instrument_type')}, "
+             f"number={mh.get('number')}, year={mh.get('year')}, "
+             f"FEK={mh.get('fek_series') or '?'}{mh.get('fek_number') or '?'}")
         return "review", None
     law = segment.segment(seg.text, law)
+    _ct = Counter(p.chunk_type for p in law.provisions)
+    emit("segment", f"{law.instrument_id}: {len(law.provisions)} provision(s)"
+         + (" — " + ", ".join(f"{n} {t}" for t, n in _ct.items()) if _ct else ""))
     # Amend BEFORE classify/embed: consolidation rewrites text_in_force to the
     # in-force version, which is what domain signal, summary and vectors must use.
     if config.AMEND_EXTRACTOR == "llm":
@@ -112,10 +122,15 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
     law = amend.consolidate(law)
     law = delegate.extract_delegations(law, full_text=seg.text)
     law = refs.extract_external_refs(law)
+    emit("amend", f"{law.instrument_id}: {len(law.amendments)} amendment edge(s), "
+         f"{len(law.delegations)} delegation(s)")
     emit("classify")
     law = enrich.classify_domain(law)
     law = enrich.classify_document_category(law)       # function taxonomy (deterministic)
     law = enrich.classify_dkn(law)                     # ΔΚΝ/Ραπτάρχης volumes (deterministic)
+    _domains = sorted({d for p in law.provisions for d in (p.legal_domain or [])})
+    emit("classify", f"{law.instrument_id}: {law.document_category or 'uncategorized'}"
+         + (f" · {', '.join(_domains)}" if _domains else ""))
     # enrich_llm is one LLM call per provision — the slowest stage on a long law.
     # Emit per-provision progress so the UI never looks frozen here.
     emit("enrich", f"{law.instrument_id}: LLM enrichment ({len(law.provisions)} provisions)")
@@ -138,6 +153,9 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
         wio.load_amendments(client, law.amendments, source_law=law)
         wio.load_delegations(client, law.delegations, source_law=law)
     _stage("Weaviate", "load", _load)
+    emit("load", f"{law.instrument_id}: document + {len(law.provisions)} chunk(s)"
+         + (f" + {len(law.amendments)} amendment(s)" if law.amendments else "")
+         + (f" + {len(law.delegations)} delegation(s)" if law.delegations else ""))
     return "done", law
 
 
@@ -165,6 +183,17 @@ def process_document(client, st: State, path: str,
         ex = extract.extract_pdf(path)
         text = normalize_display(ex.text)
         mh = ex.masthead or {}
+        # detail: how the PDF came in (text/scanned/mixed, pages, OCR) + what the
+        # masthead resolved to — the line that makes a mis-identification obvious.
+        emit("extract", f"{ex.classification}, {len(ex.pages_markdown)} page(s)"
+             + (f", {len(ex.ocr_pages)} OCR" if ex.ocr_pages else "")
+             + (f", {len(ex.table_pages)} table" if ex.table_pages else "")
+             + f" · masthead: {mh.get('instrument_type') or 'unknown'}"
+             + (f" {mh.get('number')}" if mh.get('number') else "")
+             + f", FEK {mh.get('fek_series') or '?'} {mh.get('fek_number') or '?'}"
+             + f"/{mh.get('year') or '?'}")
+        for w in (ex.warnings or [])[:3]:
+            emit("extract", f"warning: {w}")
 
         # One gazette PDF may contain N instruments: primary legislation is a
         # single act, but a decision issue (any Β΄, or an Α΄ ministerial section)
@@ -178,10 +207,11 @@ def process_document(client, st: State, path: str,
             st.set_status(doc_id, "review", stage="extract", error=reason)
             emit("review", reason)
             return "review"
+        emit("segment", f"{len(acts)} act(s) identified")
 
         # Process each act through the full spine. Amend runs before embed so the
-        # consolidated (in-force) text is what gets vectorised.
-        emit("amend")
+        # consolidated (in-force) text is what gets vectorised. Per-act detail
+        # (provisions, edges, classification, load) is emitted inside _process_act.
         done, review, total_prov = 0, 0, 0
         for seg in acts:
             status, law = _process_act(client, seg, mh, emit)
