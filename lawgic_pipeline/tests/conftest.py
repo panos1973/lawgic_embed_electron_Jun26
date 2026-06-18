@@ -65,6 +65,9 @@ def _weaviate_stub() -> types.ModuleType:
         def __or__(self, other):
             return self
 
+        def __and__(self, other):
+            return self
+
     class _Filter:
         @staticmethod
         def by_property(name):

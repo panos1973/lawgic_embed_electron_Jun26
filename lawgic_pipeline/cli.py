@@ -4,6 +4,8 @@
     python cli.py status [--json]            # show counts
     python cli.py review [--json]            # list docs needing human review
     python cli.py retry [--json]             # re-run pending/error docs
+    python cli.py history --law 4619/2019 --article 5   # one provision's timeline
+    python cli.py graph-status [--json]      # amendment-graph QA / dangling report
 
 In --json mode, one JSON object is printed per line (stdout), flushed live, so a
 parent process (Electron main) can stream progress.
@@ -207,11 +209,56 @@ def cmd_graph_status():
             print(f"Amendments: {result['amendments']}  "
                   f"target_law_present={result['target_law_present']}  "
                   f"target_law_missing={result['target_law_missing']}  "
-                  f"undated={result['undated']}")
+                  f"undated={result['undated']}  "
+                  f"unresolved={result.get('unresolved', 0)}")
             if result["dangling_targets"]:
-                print("Dangling targets (sample):")
+                print("Dangling targets — target law absent (sample):")
                 for t in result["dangling_targets"]:
                     print(f"  {t}")
+            if result.get("unresolved_targets"):
+                print("Unresolved references — not pinned to a canonical target (sample):")
+                for t in result["unresolved_targets"]:
+                    print(f"  {t}")
+    finally:
+        client.close()
+
+
+def cmd_history(law: str, article: str):
+    """Full timeline of one provision: the amendment edges that target it (who
+    changed it, how, when) merged with its text versions (the wording at each
+    stage). The chain-tracing / "how did article N change over time" view."""
+    import weaviate_io as wio
+    client = wio.connect()
+    try:
+        h = wio.provision_history(client, law, article)
+        emit({"type": "history", **h})
+        if not JSON:
+            line = (f"History of {law} άρθρο {article}: "
+                    f"{h['version_count']} version(s), {h['edit_count']} amendment edge(s)")
+            if h["unresolved_edits"]:
+                line += f", {h['unresolved_edits']} unresolved"
+            print(line)
+            if h["edit_count"] and not h["target_present"]:
+                print("  (no text versions — the target/base law is not ingested yet; "
+                      "edges are shown below and resolve once it is)")
+            if h["versions"]:
+                print("  Text timeline:")
+                for v in h["versions"]:
+                    span = f"{v['valid_from'] or '?'} → {v['valid_to'] or 'current'}"
+                    cur = " [current]" if v.get("is_current") else ""
+                    print(f"    v{v.get('version', '?')}  {span}  "
+                          f"{v.get('legal_force_status', '')}{cur}  ({v['chars']} chars)")
+                    if v["text_preview"]:
+                        print(f"        {v['text_preview']}")
+            if h["edits"]:
+                print("  Amendment edges (chronological):")
+                for e in h["edits"]:
+                    by = f"ν.{e.get('source_law_number') or '?'}"
+                    if e.get("source_article_number"):
+                        by += f" άρθρο {e['source_article_number']}"
+                    flag = "" if e.get("resolved", True) else "  [UNRESOLVED]"
+                    print(f"    {e.get('effective_date') or '????-??-??'}  "
+                          f"{e.get('action', '?'):<12} by {by}{flag}")
     finally:
         client.close()
 
@@ -409,6 +456,9 @@ def main():
     sub.add_parser("retry")
     sub.add_parser("consolidate")              # build versioned amendment timeline
     sub.add_parser("graph-status")             # amendment-graph QA / dangling report
+    hp = sub.add_parser("history")             # one provision's full timeline
+    hp.add_argument("--law", required=True)
+    hp.add_argument("--article", required=True)
     sub.add_parser("collections")              # list collections + counts
     sub.add_parser("laws")                     # list embedded laws (Browse picker)
     ip = sub.add_parser("inspect")             # dump one law's objects in a collection
@@ -426,6 +476,7 @@ def main():
      "review": cmd_review, "retry": cmd_retry,
      "consolidate": cmd_consolidate,
      "graph-status": cmd_graph_status,
+     "history": lambda: cmd_history(args.law, args.article),
      "collections": cmd_collections,
      "laws": cmd_laws,
      "inspect": lambda: cmd_inspect(args.collection, args.law),
