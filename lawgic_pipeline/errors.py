@@ -26,6 +26,20 @@ class FatalIngestError(Exception):
         super().__init__(f"{provider} — {stage}: {detail}")
 
 
+class RateLimitExhausted(Exception):
+    """A retryable error (429 / rate-limit / 5xx) that PERSISTED through every
+    retry — i.e. systemic throttling or an exhausted quota, not a one-off blip.
+
+    Treated as fatal (looks_fatal -> True) so the run PAUSES — the operator raises
+    the quota (or waits) and resumes — instead of marking many documents 'error'
+    one by one. Carries the provider and the last underlying error.
+    """
+    def __init__(self, provider: str, last: BaseException):
+        self.provider = provider
+        self.last = last
+        super().__init__(f"{provider}: rate limit persisted after retries ({last})")
+
+
 # Substrings that mark a recurring credential/endpoint failure (NOT a transient
 # hiccup). Matched case-insensitively against "<ExcType> <message>".
 _FATAL = (
@@ -44,8 +58,11 @@ _TRANSIENT = (
 
 
 def looks_fatal(exc: BaseException) -> bool:
-    """True if `exc` is a recurring credential/endpoint failure (auth, bad URL/
-    endpoint, missing key/deployment) rather than a transient, retryable hiccup."""
+    """True if `exc` should STOP the run rather than mark one document 'error':
+    a recurring credential/endpoint failure (auth, bad URL/endpoint, missing key/
+    deployment) OR a rate limit that persisted through every retry (RateLimitExhausted)."""
+    if isinstance(exc, RateLimitExhausted):
+        return True            # persistent throttling / exhausted quota -> pause
     s = f"{type(exc).__name__} {exc}".lower()
     if any(m in s for m in _TRANSIENT):
         return False

@@ -109,15 +109,21 @@ def test_with_retry_does_not_retry_token_limit():
     assert len(calls) == 1                                # raised immediately, no retry
 
 
-def test_with_retry_gives_up_after_max():
+def test_with_retry_pauses_when_rate_limit_persists():
+    # a transient error that survives every retry is systemic, not a blip ->
+    # RateLimitExhausted, which looks_fatal flags so the RUN PAUSES (the operator
+    # raises the quota / waits, then resumes) rather than erroring document by document.
+    from errors import RateLimitExhausted, looks_fatal
+
     def always():
         raise RuntimeError("503 temporarily unavailable")
 
     try:
-        ratelimit.with_retry(always, provider="test", max_attempts=3, base=1.001)
+        ratelimit.with_retry(always, provider="voyage", max_attempts=3, base=1.001)
         assert False, "should have raised"
-    except RuntimeError as e:
-        assert "503" in str(e)
+    except RateLimitExhausted as e:
+        assert e.provider == "voyage" and "503" in str(e.last)
+        assert looks_fatal(e) is True
 
 
 if __name__ == "__main__":

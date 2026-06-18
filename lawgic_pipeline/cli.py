@@ -77,7 +77,7 @@ def cmd_ingest(folder: str):
     # Connecting is the first credential gate: a bad Weaviate URL/key fails here,
     # before any file — surface it as a clean PAUSE instead of a crash or churn.
     try:
-        client = wio.connect()
+        main_client = wio.connect()
     except (Exception, SystemExit) as e:                 # noqa: BLE001
         fe = orchestrator.as_fatal(e, "Weaviate", "connect")
         emit({"type": "fatal", "provider": fe.provider, "stage": fe.stage,
@@ -87,6 +87,28 @@ def cmd_ingest(folder: str):
             print(f"\nPAUSED — {fe.provider} ({fe.stage}): {fe.detail}")
         st.close()
         return
+
+    # Each POOL worker uses its OWN Weaviate client. The v4 client is not built for
+    # concurrent batch writes sharing one connection across many threads, so at high
+    # concurrency a shared client can throw; a per-thread client removes that risk.
+    # The main thread (serial path + the Phase-2 consolidation) reuses the gate
+    # client. Connect once per worker thread (reused across its documents); close all
+    # at the end.
+    _tls = threading.local()
+    _extra_clients: list = []
+    _extra_lock = threading.Lock()
+
+    def worker_client():
+        if threading.current_thread() is threading.main_thread():
+            return main_client
+        c = getattr(_tls, "client", None)
+        if c is None:
+            c = wio.connect()
+            _tls.client = c
+            with _extra_lock:
+                _extra_clients.append(c)
+        return c
+
     try:
         pdfs = sorted(glob.glob(os.path.join(folder, "**", "*.pdf"), recursive=True))
         # Oldest-first by filename keeps a stable order; true chronological ordering
@@ -116,7 +138,7 @@ def cmd_ingest(folder: str):
                 _human(stage, msg)
                 emit({"type": "stage", "doc": _n, "stage": stage, "msg": msg})
             try:
-                status = orchestrator.process_document(client, st, path, progress)
+                status = orchestrator.process_document(worker_client(), st, path, progress)
             except orchestrator.FatalIngestError as fe:
                 # credential/endpoint failure: stop the whole run (first one wins).
                 # process_document already released this doc to 'pending' for resume.
@@ -163,7 +185,7 @@ def cmd_ingest(folder: str):
         # PHASE 2 — serial cross-law consolidation (only when the batch finished
         # without a fatal stop). Order-sensitive; safe, idempotent.
         try:
-            res = wio.assemble_article_timeline(client)
+            res = wio.assemble_article_timeline(main_client)
             emit({"type": "stage", "doc": "", "stage": "consolidate",
                   "msg": f"articles={res.get('articles',0)} "
                          f"versions={res.get('versions_written',0)} "
@@ -177,7 +199,13 @@ def cmd_ingest(folder: str):
         if not JSON:
             print("\nCounts:", counts)
     finally:
-        client.close(); st.close()
+        for c in _extra_clients:                         # per-worker clients
+            try:
+                c.close()
+            except Exception:                            # noqa: BLE001
+                pass
+        main_client.close()
+        st.close()
 
 
 def cmd_consolidate():

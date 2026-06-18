@@ -100,6 +100,29 @@ def test_fatal_credential_error_stops_and_requeues(fek_pdf, tmp_path, monkeypatc
     assert counts.get("pending") == 1 and not counts.get("error")
 
 
+def test_persistent_rate_limit_pauses_and_requeues(fek_pdf, tmp_path, monkeypatch):
+    """A rate limit that survived every retry (RateLimitExhausted) must PAUSE the run
+    (FatalIngestError) and leave the doc 'pending' for resume — NOT mark it 'error'.
+    This is the 'if we hit a limit, stop and let me fix it, then redo this doc whole'
+    behaviour."""
+    import orchestrator
+    import voyage_embed as ve
+    from errors import FatalIngestError, RateLimitExhausted
+    from state import State
+
+    def _throttled(chunks, progress=None):
+        raise RateLimitExhausted("voyage", RuntimeError("429 Too Many Requests"))
+    monkeypatch.setattr(ve, "embed_law_chunks", _throttled)
+
+    st = State(str(tmp_path / "s.db"))
+    with pytest.raises(FatalIngestError) as ei:
+        orchestrator.process_document(client=object(), st=st, path=fek_pdf)
+    assert "embed" in ei.value.stage
+    counts = st.counts()
+    st.close()
+    assert counts.get("pending") == 1 and not counts.get("error")
+
+
 def test_unidentifiable_pdf_routes_to_review(tmp_path, monkeypatch):
     """A PDF with no parseable masthead must go to review, not invent an id."""
     import orchestrator

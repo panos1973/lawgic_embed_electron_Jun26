@@ -4,8 +4,16 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from errors import looks_fatal, as_fatal, FatalIngestError  # noqa: E402
+from errors import looks_fatal, as_fatal, FatalIngestError, RateLimitExhausted  # noqa: E402
 from state import State  # noqa: E402
+
+
+def test_rate_limit_exhausted_is_fatal_but_raw_throttle_is_not():
+    # a transient throttle that survived EVERY retry is systemic -> pause the run
+    exhausted = RateLimitExhausted("voyage", RuntimeError("429 Too Many Requests"))
+    assert looks_fatal(exhausted) is True
+    # but a raw 429 seen mid-retry is still transient -> retried, NOT a pause
+    assert looks_fatal(RuntimeError("429 Too Many Requests")) is False
 
 
 def test_looks_fatal_auth_and_endpoint_errors():
