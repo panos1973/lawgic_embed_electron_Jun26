@@ -48,6 +48,11 @@
           <button class="btn primary" id="resumeBtn" hidden>Resume</button>
           <button class="btn ghost" id="cancelBtn" disabled>Cancel</button>
         </div>
+        <div class="row">
+          <button class="btn" id="enrichBtn" disabled>Backfill enrichment (no re-embed)</button>
+          <span class="hint">fills summaries/keywords + title on already-embedded docs in the
+            chosen folder — needs an LLM key; vectors are not touched.</span>
+        </div>
         <div class="paused-banner" id="pausedBanner" hidden></div>
         <div class="progress"><div class="bar" id="bar"></div></div>
         <div class="progress-label" id="progressLabel">—</div>

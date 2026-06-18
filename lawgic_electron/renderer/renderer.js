@@ -58,7 +58,18 @@ function logLine({ stage, doc, msg, cls, ts }) {
 // ---- ingest ----
 $('chooseBtn').addEventListener('click', async () => {
   const f = await window.api.selectFolder();
-  if (f) { folder = f; $('folderPath').textContent = f; $('startBtn').disabled = false; }
+  if (f) {
+    folder = f; $('folderPath').textContent = f;
+    $('startBtn').disabled = false; $('enrichBtn').disabled = false;
+  }
+});
+
+$('enrichBtn').addEventListener('click', () => {
+  if (!folder) return;
+  $('log').innerHTML = '';
+  $('startBtn').disabled = true; $('enrichBtn').disabled = true; $('cancelBtn').disabled = false;
+  setPill('busy', 'enriching');
+  window.api.enrich(folder);   // backfill summaries/keywords/title; vectors untouched
 });
 
 $('startBtn').addEventListener('click', () => {
@@ -128,6 +139,7 @@ window.api.onPipelineEvent((o) => {
 
 window.api.onPipelineDone(({ code, error }) => {
   $('cancelBtn').disabled = true;
+  $('enrichBtn').disabled = !folder;
   if (paused) {
     // stopped on a credential/endpoint error — offer Resume, not a fresh Start
     $('resumeBtn').hidden = false; $('startBtn').disabled = true;

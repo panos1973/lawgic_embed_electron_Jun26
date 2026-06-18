@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('api', {
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
   startIngest: (folder) => ipcRenderer.invoke('pipeline:start', folder),
+  enrich: (folder) => ipcRenderer.invoke('pipeline:enrich', folder),
   retry: () => ipcRenderer.invoke('pipeline:retry'),
   cancel: () => ipcRenderer.send('pipeline:cancel'),
   getStatus: () => ipcRenderer.invoke('pipeline:status'),

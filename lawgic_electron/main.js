@@ -154,6 +154,7 @@ function registerIpc(win) {
     return r.canceled ? null : r.filePaths[0];
   });
   ipcMain.handle('pipeline:start', (_e, folder) => { runStreaming(win, ['ingest', folder]); return true; });
+  ipcMain.handle('pipeline:enrich', (_e, folder) => { runStreaming(win, ['enrich', folder]); return true; });
   ipcMain.handle('pipeline:retry', () => { runStreaming(win, ['retry']); return true; });
   ipcMain.on('pipeline:cancel', () => { if (activeChild) activeChild.kill(); });
   ipcMain.handle('pipeline:status', () => runOneShot(['status'], 'status'));

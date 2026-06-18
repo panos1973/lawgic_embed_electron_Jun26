@@ -68,6 +68,18 @@ def _human(stage, msg):
         print(f"    [{stage}] {msg}")
 
 
+def _warn_if_no_llm_key():
+    """Surface a missing LLM key up front: enrichment (summaries/keywords) is then
+    skipped silently, which is easy to miss in a long run — so say it loudly."""
+    keyname = config.PROVIDERS.get(config.LLM_PROVIDER, {}).get("key", "")
+    if not getattr(config, keyname, ""):
+        emit({"type": "stage", "doc": "", "stage": "warning",
+              "msg": f"no {config.LLM_PROVIDER} key set — LLM summaries/keywords will be "
+                     "empty (classification, title and embeddings still run)"})
+        if not JSON:
+            print(f"WARNING: no {config.LLM_PROVIDER} key — LLM enrichment disabled")
+
+
 def cmd_ingest(folder: str):
     import weaviate_io as wio
     import orchestrator
@@ -109,6 +121,7 @@ def cmd_ingest(folder: str):
                 _extra_clients.append(c)
         return c
 
+    _warn_if_no_llm_key()
     try:
         pdfs = sorted(glob.glob(os.path.join(folder, "**", "*.pdf"), recursive=True))
         # Oldest-first by filename keeps a stable order; true chronological ordering
@@ -206,6 +219,60 @@ def cmd_ingest(folder: str):
                 pass
         main_client.close()
         st.close()
+
+
+def cmd_enrich(folder: str):
+    """Backfill LLM enrichment (summaries/keywords) + document title onto laws
+    ALREADY embedded from `folder`, WITHOUT re-embedding the vectors. Run this after
+    a deterministic-only / no-LLM-key bulk embed to fill the enrichment cheaply."""
+    import weaviate_io as wio
+    import orchestrator
+    try:
+        client = wio.connect()
+    except (Exception, SystemExit) as e:                 # noqa: BLE001
+        fe = orchestrator.as_fatal(e, "Weaviate", "connect")
+        emit({"type": "fatal", "provider": fe.provider, "stage": fe.stage,
+              "doc": "", "detail": fe.detail})
+        if not JSON:
+            print(f"\nPAUSED — {fe.provider} ({fe.stage}): {fe.detail}")
+        return
+    _warn_if_no_llm_key()
+    try:
+        pdfs = sorted(glob.glob(os.path.join(folder, "**", "*.pdf"), recursive=True))
+        total = len(pdfs)
+        emit({"type": "scan", "folder": folder, "total": total})
+        if not JSON:
+            print(f"Enriching {total} already-embedded document(s) from {folder}")
+        done = 0
+        for i, path in enumerate(pdfs, 1):
+            name = os.path.basename(path)
+            emit({"type": "doc_start", "doc": name, "index": i, "total": total})
+
+            def progress(stage, msg, _n=name):
+                _human(stage, msg)
+                emit({"type": "stage", "doc": _n, "stage": stage, "msg": msg})
+
+            try:
+                res = orchestrator.enrich_document(client, path, progress)
+            except orchestrator.FatalIngestError as fe:
+                # bad LLM key / exhausted quota -> stop cleanly; fix and re-run.
+                emit({"type": "fatal", "provider": fe.provider, "stage": fe.stage,
+                      "doc": name, "detail": fe.detail})
+                emit({"type": "summary", "counts": {"enriched": done}, "paused": True})
+                if not JSON:
+                    print(f"\nPAUSED — {fe.provider} ({fe.stage}): {fe.detail}")
+                return
+            except Exception as e:                       # noqa: BLE001 — isolate one bad doc
+                emit({"type": "stage", "doc": name, "stage": "error", "msg": str(e)})
+                continue
+            done += 1
+            emit({"type": "doc_done", "doc": name, "status": "done", "index": i,
+                  "total": total, "chunks_updated": res.get("chunks_updated", 0)})
+        emit({"type": "summary", "counts": {"enriched": done, "total": total}})
+        if not JSON:
+            print(f"Enriched {done}/{total} document(s)")
+    finally:
+        client.close()
 
 
 def cmd_consolidate():
@@ -478,6 +545,7 @@ def main():
     ap = argparse.ArgumentParser(description="Lawgic FEK ingestion pipeline")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("ingest"); p.add_argument("folder")
+    ep = sub.add_parser("enrich"); ep.add_argument("folder")   # backfill enrichment, no re-embed
     sub.add_parser("status")
     sub.add_parser("diag")                     # credential/connectivity self-check
     sub.add_parser("review")
@@ -503,6 +571,7 @@ def main():
     ratelimit.configure(voyage_rpm=config.VOYAGE_RPM,
                         llm_provider=config.LLM_PROVIDER, llm_rpm=config.LLM_RPM)
     {"ingest": lambda: cmd_ingest(args.folder), "status": cmd_status,
+     "enrich": lambda: cmd_enrich(args.folder),
      "diag": cmd_diag,
      "review": cmd_review, "retry": cmd_retry,
      "consolidate": cmd_consolidate,
