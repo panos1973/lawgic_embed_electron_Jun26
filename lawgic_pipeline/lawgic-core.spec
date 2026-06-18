@@ -21,7 +21,10 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 # binaries, datas (e.g. pdfminer's CMap tables) and hidden submodules.
 datas, binaries, hiddenimports = [], [], []
 for pkg in ("weaviate", "voyageai", "pdfplumber", "pdfminer", "anthropic",
-            "openai", "azure.ai.documentintelligence", "grpc"):
+            "openai", "azure.ai.documentintelligence", "grpc",
+            "fitz"):                       # PyMuPDF — ships the MuPDF binaries +
+                                           # data; imported lazily in table_vision,
+                                           # so static analysis would miss it.
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
