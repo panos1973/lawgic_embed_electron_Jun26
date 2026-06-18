@@ -115,6 +115,19 @@ def test_load_document_drops_null_dates():
     assert "fek_year" not in props
 
 
+def test_load_document_writes_document_summary_and_drops_empty():
+    # the whole-law overview is stored on the document node (not per-chunk)
+    c = _FakeClient()
+    law = _law(); law.summary = "Ο νόμος ρυθμίζει τη δοκιμή."
+    wio.load_document(c, law)
+    assert c.sink["Jun2026LawDocument"][0]["props"]["document_summary"] == \
+        "Ο νόμος ρυθμίζει τη δοκιμή."
+    # empty summary -> field dropped, never written as null
+    c2 = _FakeClient(); law2 = _law(); law2.summary = ""
+    wio.load_document(c2, law2)
+    assert "document_summary" not in c2.sink["Jun2026LawDocument"][0]["props"]
+
+
 def test_load_amendments_denormalizes_target():
     c = _FakeClient()
     ops = [AmendmentOp(op="replaces", target_id="ν.4675/2024#αρ.24.παρ.2",
