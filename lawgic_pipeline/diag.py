@@ -91,6 +91,45 @@ def check_weaviate(opener=None) -> dict:
                 "detail": f"{type(e).__name__}: {e}"}
 
 
+def check_llm(complete=None) -> dict:
+    """Make a TINY completion to prove the LLM provider key + deployment actually
+    respond — not just that a key string is present. This is what 'key present' alone
+    cannot tell you (a wrong Azure deployment name passes the presence check but 404s
+    at embed time, silently disabling enrichment + table vision). Costs ~a few tokens.
+    `complete` is injectable for tests.
+    """
+    prov = config.LLM_PROVIDER
+    prov_key_env = (config.PROVIDERS.get(prov) or {}).get("key", "")
+    model = config.LLM_MODEL or (config.PROVIDERS.get(prov) or {}).get("default_model", "")
+    if not (os.environ.get(prov_key_env, "") or "").strip():
+        return {"service": f"llm ({prov})", "ok": False, "status": "not_configured",
+                "detail": f"no {prov} key set — LLM enrichment + table vision are OFF"}
+    try:
+        if complete is None:
+            import llm
+            complete = llm.complete
+        complete("You are a connectivity probe. Reply with: OK", "ping",
+                 want_json=False, max_tokens=5)
+        return {"service": f"llm ({prov})", "ok": True, "status": "ok",
+                "detail": f"provider '{prov}', model/deployment '{model}' responded"}
+    except SystemExit as e:
+        return {"service": f"llm ({prov})", "ok": False, "status": "not_configured",
+                "detail": str(e)}
+    except Exception as e:  # noqa: BLE001
+        msg = str(e).lower()
+        if any(s in msg for s in ("404", "deploymentnotfound", "resource not found",
+                                  "does not exist", "no deployment")):
+            return {"service": f"llm ({prov})", "ok": False, "status": "not_found",
+                    "detail": f"model/deployment '{model}' not found — check it matches your "
+                              f"{prov} deployment name (LLM_MODEL): {str(e)[:90]}"}
+        if any(s in msg for s in ("401", "403", "unauthor", "invalid api key",
+                                  "permission denied")):
+            return {"service": f"llm ({prov})", "ok": False, "status": "auth_error",
+                    "detail": f"key rejected — check the {prov} key: {str(e)[:90]}"}
+        return {"service": f"llm ({prov})", "ok": False, "status": "error",
+                "detail": f"{type(e).__name__}: {str(e)[:120]}"}
+
+
 def configured_credentials() -> dict:
     """Presence-only map of which credentials are set (never the values)."""
     def has(v) -> bool:
@@ -110,7 +149,7 @@ def configured_credentials() -> dict:
 
 def run_diagnostics(opener=None) -> dict:
     """Assemble the full diagnostics report."""
-    checks = [check_weaviate(opener), check_azure_di(opener)]
+    checks = [check_weaviate(opener), check_azure_di(opener), check_llm()]
     return {
         "configured": configured_credentials(),
         "checks": checks,

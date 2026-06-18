@@ -75,6 +75,40 @@ def test_weaviate_ok_and_auth(monkeypatch):
     assert diag.check_weaviate(_http(401))["status"] == "auth_error"
 
 
+def test_llm_not_configured(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER", "deepseek")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    r = diag.check_llm()
+    assert r["ok"] is False and r["status"] == "not_configured"
+
+
+def test_llm_ok_when_deployment_responds(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    r = diag.check_llm(complete=lambda *a, **k: "OK")    # injected: no real call
+    assert r["ok"] is True and r["status"] == "ok"
+
+
+def test_llm_deployment_not_found(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER", "azure")
+    monkeypatch.setenv("AZURE_OPENAI_KEY", "k")
+
+    def boom(*a, **k):
+        raise RuntimeError("DeploymentNotFound: the API deployment does not exist")
+    r = diag.check_llm(complete=boom)
+    assert r["ok"] is False and r["status"] == "not_found"   # the wrong-deployment trap
+
+
+def test_llm_auth_error(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER", "azure")
+    monkeypatch.setenv("AZURE_OPENAI_KEY", "bad")
+
+    def boom(*a, **k):
+        raise RuntimeError("Error code: 401 - Unauthorized: invalid api key")
+    r = diag.check_llm(complete=boom)
+    assert r["ok"] is False and r["status"] == "auth_error"
+
+
 def test_configured_credentials_presence_only(monkeypatch):
     monkeypatch.setattr(config, "AZURE_DI_ENDPOINT", "https://x/")
     monkeypatch.setattr(config, "AZURE_DI_KEY", "supersecret")
