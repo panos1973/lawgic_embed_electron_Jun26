@@ -625,23 +625,30 @@ def graph_status(client, tenant: str = None) -> dict:
     For every amendment edge, classify whether its target law is present in the
     store. A `dangling` target (target law absent after a full ingest) is either a
     missing base law (e.g. pre-2000) or a mis-resolved reference; `undated` edges
-    couldn't be placed on a timeline. Read-only.
+    couldn't be placed on a timeline; `unresolved` edges are ones the extractor
+    could not pin to a canonical target at all (a distinct failure from a resolved
+    target whose law simply isn't ingested yet). Read-only.
 
     Returns {"amendments", "target_law_present", "target_law_missing", "undated",
-             "dangling_targets" (sample)}.
+             "unresolved", "dangling_targets" (sample), "unresolved_targets" (sample)}.
     """
     tenant = tenant or config.DEFAULT_TENANT
     amd = client.collections.use(config.GRAPH_AMENDMENT).with_tenant(tenant)
     doc = client.collections.use(config.GRAPH_DOCUMENT).with_tenant(tenant)
 
-    total = present = missing = undated = 0
+    total = present = missing = undated = unresolved = 0
     dangling: set[str] = set()
+    unresolved_targets: set[str] = set()
     for obj in amd.iterator():
         p = obj.properties
         total += 1
+        tcid = (p.get("target_canonical_id") or "").strip()
+        if p.get("resolved") is False:
+            unresolved += 1
+            if tcid:
+                unresolved_targets.add(tcid)
         if not _vf_str(p.get("effective_date")):
             undated += 1
-        tcid = (p.get("target_canonical_id") or "").strip()
         instrument_id = tcid.split("#", 1)[0] if tcid else ""
         docobj = (doc.query.fetch_object_by_id(generate_uuid5("doc:" + instrument_id))
                   if instrument_id else None)
@@ -653,4 +660,84 @@ def graph_status(client, tenant: str = None) -> dict:
             present += 1
     return {"amendments": total, "target_law_present": present,
             "target_law_missing": missing, "undated": undated,
-            "dangling_targets": sorted(dangling)[:50]}
+            "unresolved": unresolved,
+            "dangling_targets": sorted(dangling)[:50],
+            "unresolved_targets": sorted(unresolved_targets)[:50]}
+
+
+def provision_history(client, law_number: str, article_number: str,
+                      tenant: str = None, text_chars: int = 240) -> dict:
+    """Full timeline of ONE provision — powers `cli history` (handoff §5C).
+
+    Merges the two temporal sources behind "how did article N of law X change over
+    time": the amendment EDGES that target it (Jun2026Amendment — who changed it,
+    how, when) and its text VERSIONS (Jun2026LawArticle — the wording at each
+    stage). Matches at the ARTICLE level (law number + article number) so it is
+    robust to the .παρ./.περ. suffixes on a canonical id. Read-only.
+
+    `target_present` is False when edits exist but no text version does — the
+    amending law was ingested but its target (base) law has not been yet, so the
+    timeline can't be built (the same "pending" condition assemble_article_timeline
+    reports). Returns {law_number, article_number, edits[], versions[], edit_count,
+    version_count, unresolved_edits, target_present}.
+    """
+    from weaviate.classes.query import Filter
+    tenant = tenant or config.DEFAULT_TENANT
+    art_number = str(article_number)
+
+    def _present(name: str) -> bool:
+        if not client.collections.exists(name):
+            return False
+        return tenant in set(client.collections.use(name).tenants.get().keys())
+
+    # 1) the amendment edges that target this article, oldest first
+    edits: list[dict] = []
+    if _present(config.GRAPH_AMENDMENT):
+        amd = client.collections.use(config.GRAPH_AMENDMENT).with_tenant(tenant)
+        flt = (Filter.by_property("target_law_number").equal(law_number)
+               & Filter.by_property("target_article_number").equal(art_number))
+        for o in amd.query.fetch_objects(filters=flt, limit=500).objects:
+            d = dict(o.properties or {})
+            edits.append({
+                "effective_date": _vf_str(d.get("effective_date")),
+                "action": d.get("action"), "scope": d.get("scope"),
+                "source_law_number": d.get("source_law_number"),
+                "source_article_number": d.get("source_article_number"),
+                "target_canonical_id": d.get("target_canonical_id"),
+                "resolved": d.get("resolved", True),
+                "extraction_method": d.get("extraction_method"),
+                "new_text_chars": len(d.get("new_text") or ""),
+                "_uuid": str(o.uuid),
+            })
+        edits.sort(key=lambda e: ((e.get("effective_date") or ""),
+                                  (e.get("source_law_number") or "")))
+
+    # 2) the article's text versions, oldest first
+    versions: list[dict] = []
+    if _present(config.GRAPH_ARTICLE):
+        art = client.collections.use(config.GRAPH_ARTICLE).with_tenant(tenant)
+        flt = (Filter.by_property("document_law_number").equal(law_number)
+               & Filter.by_property("article_number").equal(art_number))
+        for o in art.query.fetch_objects(filters=flt, limit=500).objects:
+            d = dict(o.properties or {})
+            txt = d.get("chunk_text") or ""
+            versions.append({
+                "version": d.get("version"),
+                "valid_from": _vf_str(d.get("valid_from")),
+                "valid_to": _vf_str(d.get("valid_to")),
+                "is_current": d.get("is_current"),
+                "legal_force_status": d.get("legal_force_status"),
+                "chars": len(txt),
+                "text_preview": (txt[:text_chars] + "…") if len(txt) > text_chars else txt,
+                "_uuid": str(o.uuid),
+            })
+        versions.sort(key=lambda v: ((v.get("valid_from") or ""),
+                                     int(v.get("version") or 0)))
+
+    return {
+        "law_number": law_number, "article_number": art_number,
+        "edits": edits, "versions": versions,
+        "edit_count": len(edits), "version_count": len(versions),
+        "unresolved_edits": sum(1 for e in edits if e.get("resolved") is False),
+        "target_present": bool(versions),
+    }

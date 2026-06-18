@@ -96,10 +96,10 @@ Real-FEK hardening (validated against samplefek/ corpus):
     binary so the Windows .exe needs no Python install; adapt the old app's
     windows-latest build-and-release CI.
 
-Tests: lawgic_pipeline/tests/ — 214 passing (masthead, segment, amend, enrich
+Tests: lawgic_pipeline/tests/ — 270 passing (masthead, segment, amend, enrich
 domain + document_category + dkn, delegate, normalize, quality, multiact, refs,
-weaviate_io loaders + versioned timeline assembly + graph-status, extract
-integration, full-spine e2e, validate harness).
+weaviate_io loaders + versioned timeline assembly + graph-status + provision
+history, extract integration, full-spine e2e, validate harness).
 Run: `python -m pytest tests/ -q`.
 
 Versioned temporal model (docs/10-amendment-temporal-architecture.md): provisions
@@ -108,9 +108,13 @@ flat keyed the same). assemble_article_timeline (aliased as consolidate_cross_la
 driven by `cli consolidate`) folds amendment edges forward by effective_date into
 valid_from/valid_to/is_current/legal_force_status versions on flat + article, so
 retrieval can answer both "in force now" (is_current) and "as of date D"
-(valid_from<=D<valid_to). `cli graph-status` reports dangling amendment targets.
-The per-version UUID scheme requires a recreate + re-ingest to take effect. TODO:
-cross-reference population (target_article/supersedes) + P1/P2 retrieval API.
+(valid_from<=D<valid_to). QA lenses: `cli graph-status` reports dangling amendment
+targets (target law absent) + unresolved references (extractor couldn't pin a
+canonical target) + undated edges; `cli history --law L --article N` traces one
+provision's full timeline — the amendment edges that target it ⋈ its text versions
+(handoff §5C). The per-version UUID scheme requires a recreate + re-ingest to take
+effect. TODO: cross-reference population (target_article/supersedes) + P1/P2
+retrieval API.
 
 ## Remaining (where accuracy is still won)
 1. trained ΔΚΝ model (GLC/Raptarchis47k) to augment the deterministic ΔΚΝ

@@ -512,6 +512,27 @@ def test_graph_status_flags_dangling_target(monkeypatch):
     assert "ν.9999/2099#αρ.1" in s["dangling_targets"]
 
 
+def test_graph_status_counts_unresolved_references(monkeypatch):
+    import voyage_embed as ve
+    monkeypatch.setattr(ve, "embed_law_chunks", lambda ch: [[0.0] * 4 for _ in ch])
+    c = _VClient()
+    base = _base_law()
+    wio.load_document(c, base)
+    wio.load_law(c, base, [[0.0] * 4])
+    # one resolved edge + one the extractor could not pin to a canonical target
+    wio.load_amendments(c, [
+        AmendmentOp(op="replaces", target_id="ν.4412/2016#αρ.15", scope="article",
+                    new_text="νέο", effective_date="2024-04-01", sub_edit_ordinal="1",
+                    resolved=True),
+        AmendmentOp(op="replaces", target_id="ν.4412/2016#αρ.15", scope="article",
+                    new_text="x", effective_date="2024-04-01", sub_edit_ordinal="2",
+                    resolved=False),
+    ], source_law=_amending_law("2024-04-01"))
+    s = wio.graph_status(c, tenant="gr")
+    assert s["amendments"] == 2 and s["unresolved"] == 1
+    assert "ν.4412/2016#αρ.15" in s["unresolved_targets"]
+
+
 def test_timeline_repeal_marks_terminal(monkeypatch):
     import voyage_embed as ve
     monkeypatch.setattr(ve, "embed_law_chunks", lambda ch: [[0.0] * 4 for _ in ch])
@@ -606,6 +627,55 @@ def test_fetch_law_objects_sorts_by_chunk_index_and_tags_uuid():
 def test_fetch_law_objects_absent_collection_returns_empty():
     assert wio.fetch_law_objects(_InspectClient({}), wio.config.FLAT_COLLECTION,
                                  "5090/2024", tenant="gr") == []
+
+
+def test_provision_history_merges_edits_and_versions():
+    # the fake's fetch_objects ignores the (opaque) filter and returns the preset
+    # rows, so each collection holds only this provision's objects.
+    store = {
+        wio.config.GRAPH_AMENDMENT: [
+            {"target_law_number": "4412/2016", "target_article_number": "15",
+             "target_canonical_id": "ν.4412/2016#αρ.15", "action": "replaces",
+             "source_law_number": "5090/2024", "source_article_number": "2",
+             "effective_date": "2024-04-01T00:00:00Z", "new_text": "νέο κείμενο",
+             "resolved": True, "canonical_id": "e1"},
+            {"target_law_number": "4412/2016", "target_article_number": "15",
+             "target_canonical_id": "ν.4412/2016#αρ.15", "action": "modifies",
+             "source_law_number": "5200/2025", "effective_date": "2025-02-01T00:00:00Z",
+             "resolved": False, "new_text": "", "canonical_id": "e2"},
+        ],
+        wio.config.GRAPH_ARTICLE: [
+            {"document_law_number": "4412/2016", "article_number": "15", "version": 2,
+             "valid_from": "2024-04-01T00:00:00Z", "is_current": True,
+             "legal_force_status": "amended", "chunk_text": "νέο κείμενο",
+             "canonical_id": "v2"},
+            {"document_law_number": "4412/2016", "article_number": "15", "version": 1,
+             "valid_from": "2016-08-08T00:00:00Z", "valid_to": "2024-04-01T00:00:00Z",
+             "is_current": False, "legal_force_status": "in_force",
+             "chunk_text": "αρχικό κείμενο", "canonical_id": "v1"},
+        ],
+    }
+    h = wio.provision_history(_InspectClient(store), "4412/2016", "15", tenant="gr")
+    assert h["edit_count"] == 2 and h["version_count"] == 2
+    assert h["unresolved_edits"] == 1 and h["target_present"] is True
+    # edits oldest-first; versions oldest-first by valid_from (v1 then v2)
+    assert [e["effective_date"] for e in h["edits"]] == \
+        ["2024-04-01T00:00:00Z", "2025-02-01T00:00:00Z"]
+    assert [v["version"] for v in h["versions"]] == [1, 2]
+    assert h["versions"][0]["valid_to"] == "2024-04-01T00:00:00Z"
+    assert h["versions"][1]["is_current"] is True
+
+
+def test_provision_history_edits_without_base_law_not_present():
+    # amending law ingested, target/base law not yet -> edges but no text versions
+    store = {wio.config.GRAPH_AMENDMENT: [
+        {"target_law_number": "1234/1999", "target_article_number": "3",
+         "target_canonical_id": "ν.1234/1999#αρ.3", "action": "replaces",
+         "source_law_number": "5090/2024", "effective_date": "2024-04-01T00:00:00Z",
+         "resolved": True, "new_text": "x", "canonical_id": "e1"}]}
+    h = wio.provision_history(_InspectClient(store), "1234/1999", "3", tenant="gr")
+    assert h["edit_count"] == 1 and h["version_count"] == 0
+    assert h["target_present"] is False
 
 
 def test_law_fields_mapping_covers_all_collections():
