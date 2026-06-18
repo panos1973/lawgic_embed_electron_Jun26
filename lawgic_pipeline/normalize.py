@@ -44,12 +44,31 @@ def dehyphenate(text: str) -> str:
 _TOKEN = re.compile(r"\S+")
 
 
+def _is_doubled(s: str) -> bool:
+    n = len(s)
+    return (n >= 6 and n % 2 == 0 and not any(c.isdigit() for c in s)
+            and all(s[i] == s[i + 1] for i in range(0, n, 2)))
+
+
+# Trailing / leading punctuation a doubled word may carry ("…χαρακτήρες," "«όροι»").
+# '.' is intentionally NOT peeled — it can be part of the doubled pattern itself
+# ("ΜΜ..ΔΔ..ΕΕ.." -> "Μ.Δ.Ε."), which the whole-token check already handles.
+_PUNCT_TAIL = ",·;:)]}»”’"
+_PUNCT_LEAD = "([{«“‘"
+
+
 def _undouble_token(tok: str) -> str:
-    n = len(tok)
-    if n < 6 or n % 2 == 1 or any(ch.isdigit() for ch in tok):
-        return tok
-    if all(tok[i] == tok[i + 1] for i in range(0, n, 2)):
+    if _is_doubled(tok):                     # whole token fully paired
         return tok[::2]
+    lead, core, tail = "", tok, ""           # else peel attached punctuation and retry
+    while core and core[-1] in _PUNCT_TAIL:
+        tail = core[-1] + tail
+        core = core[:-1]
+    while core and core[0] in _PUNCT_LEAD:
+        lead += core[0]
+        core = core[1:]
+    if core != tok and _is_doubled(core):
+        return lead + core[::2] + tail
     return tok
 
 

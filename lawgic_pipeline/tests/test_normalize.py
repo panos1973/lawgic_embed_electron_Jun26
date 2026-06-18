@@ -23,6 +23,22 @@ def test_collapse_doubled_glyph_headings():
     ) == "ΔΙΚΑΙΟΛΟΓΗΤΙΚΑ ΥΠΟΨΗΦΙΟΤΗΤΑΣ"
 
 
+def test_collapse_doubled_glyph_with_attached_punctuation():
+    # a doubled word that carries trailing/leading punctuation is odd-length as a
+    # whole token, so peel the punctuation, collapse the core, re-attach.
+    assert collapse_doubled_glyphs("χχααρραακκττήήρρεεςς,") == "χαρακτήρες,"
+    assert collapse_doubled_glyphs("«ΟΟΡΡΟΟΙΙ»") == "«ΟΡΟΙ»"
+    assert collapse_doubled_glyphs("((ττοουυ))") == "(του)"
+    assert collapse_doubled_glyphs("ΟΟΡΡΟΟΙΙ·") == "ΟΡΟΙ·"
+    # when the quotes are themselves double-struck the whole token is fully paired,
+    # so the whole-token check collapses everything in one pass
+    assert collapse_doubled_glyphs("««ΟΟΡΡΟΟΙΙ»»") == "«ΟΡΟΙ»"
+    # the dot is NOT a peelable mark — abbreviations stay intact via whole-token check
+    assert collapse_doubled_glyphs("ΜΜ..ΔΔ..ΕΕ..") == "Μ.Δ.Ε."
+    # words that merely END in a real double + punctuation are left alone
+    assert collapse_doubled_glyphs("γράμμα, θάλασσα.") == "γράμμα, θάλασσα."
+
+
 def test_latin_homoglyph_nomos():
     # real masthead: "NOMO" is Latin, final Σ is Greek
     assert normalize_glyphs("NOMOΣ ΥΠ' ΑΡΙΘΜ. 5086").startswith("ΝΟΜΟΣ")
