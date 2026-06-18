@@ -203,6 +203,10 @@
           LLM amendment extraction (uses the model above for amendment edges —
           more accurate on nested Greek references, but one call per amending
           provision; needs the provider key. OFF = deterministic regex)</label>
+        <label class="check"><input type="checkbox" id="tableVision" />
+          Read tables with a vision LLM (rasterizes only the table pages and has the
+          model read them — works for digital OR photocopied tables; produces a faithful
+          table + a Greek narration that embeds well. Needs the provider key.)</label>
       </div>
       <div class="panel">
         <div class="panel-title">Credentials <span class="enc" id="encNote"></span></div>

@@ -189,6 +189,7 @@ async function loadSettings() {
   $('llmChoice').value = `${s.llmProvider || 'anthropic'}|${s.llmModel || 'claude-haiku-4-5'}`;
   $('llmThinking').checked = !!s.llmThinking;
   $('amendLlm').checked = (s.amendExtractor === 'llm');
+  $('tableVision').checked = !!s.tableVision;
   $('encNote').textContent = s.encryptionAvailable
     ? '· keys encrypted at rest' : '· plaintext (no OS keychain)';
 }
@@ -201,6 +202,7 @@ $('saveSettings').addEventListener('click', async () => {
   obj.llmModel = model;
   obj.llmThinking = $('llmThinking').checked;
   obj.amendExtractor = $('amendLlm').checked ? 'llm' : 'deterministic';
+  obj.tableVision = $('tableVision').checked;
   await window.api.saveSettings(obj);
   $('savedNote').textContent = 'saved ✓';
   setTimeout(() => ($('savedNote').textContent = ''), 2000);
@@ -215,6 +217,7 @@ $('testCreds').addEventListener('click', async () => {
   obj.llmProvider = provider; obj.llmModel = model;
   obj.llmThinking = $('llmThinking').checked;
   obj.amendExtractor = $('amendLlm').checked ? 'llm' : 'deterministic';
+  obj.tableVision = $('tableVision').checked;
   await window.api.saveSettings(obj);
 
   $('diagNote').textContent = 'checking…';

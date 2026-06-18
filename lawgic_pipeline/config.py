@@ -49,6 +49,12 @@ LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0"))
 # until the LLM extractor is validated against the gold edges (benchmark).
 AMEND_EXTRACTOR = os.environ.get("AMEND_EXTRACTOR", "deterministic")  # deterministic | llm
 
+# Read table pages with the multimodal LLM: rasterize each detected table page and
+# let the model READ the image -> faithful markdown (-> table_json for exact lookup)
+# + a Greek narration (-> embedded, for semantic retrieval). Source-agnostic (digital
+# OR photocopied). Runs ONLY on detected table pages; needs an LLM key (e.g. gpt-4.1-mini).
+TABLE_VISION = os.environ.get("TABLE_VISION", "off").lower() in ("on", "true", "1")
+
 # sdk: which client. base_url: OpenAI-compatible endpoint (None = native). key: config attr.
 PROVIDERS = {
     "anthropic": {"sdk": "anthropic", "base_url": None,
