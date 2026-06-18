@@ -34,10 +34,35 @@ def dehyphenate(text: str) -> str:
     return text
 
 
+# Bold / outlined headings are drawn twice in the PDF, so extraction reads each
+# glyph twice: "ΟΡΟΙ" -> "ΟΟΡΡΟΟΙΙ", "ΔΙΚΑΙΟΛΟΓΗΤΙΚΑ" -> "ΔΔΙΙΚΚΑΑΙΙΟΟΛΛΟΟΓΓΗΗΤΤΙΙΚΚΑΑ",
+# "Μ.Δ.Ε." -> "ΜΜ..ΔΔ..ΕΕ..". A doubled run is even-length and made ENTIRELY of
+# identical adjacent pairs — a shape natural words never have (Greek doubles like
+# σσ/λλ/γγ are isolated, never at every position). So collapse ONLY a whole token
+# that is fully paired, and never one containing a digit (1122 != 12) — real double
+# letters and numbers are left intact.
+_TOKEN = re.compile(r"\S+")
+
+
+def _undouble_token(tok: str) -> str:
+    n = len(tok)
+    if n < 6 or n % 2 == 1 or any(ch.isdigit() for ch in tok):
+        return tok
+    if all(tok[i] == tok[i + 1] for i in range(0, n, 2)):
+        return tok[::2]
+    return tok
+
+
+def collapse_doubled_glyphs(text: str) -> str:
+    """Repair the bold/double-struck extraction artifact (every glyph read twice)."""
+    return _TOKEN.sub(lambda m: _undouble_token(m.group(0)), text)
+
+
 def normalize_display(text: str) -> str:
     """Clean text for storage/segmentation (keeps accents and case)."""
     text = unicodedata.normalize("NFC", text)
     text = _fix_glyphs(text)
+    text = collapse_doubled_glyphs(text)        # repair bold/double-struck headings
     text = dehyphenate(text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
