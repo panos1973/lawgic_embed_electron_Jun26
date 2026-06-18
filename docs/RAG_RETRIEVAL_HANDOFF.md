@@ -42,6 +42,7 @@ async function queryVector(q: string): Promise<number[]> {
 ```
 
 - **Reranker (optional, recommended):** voyage `rerank-2.5` over the candidate `chunk_text`s to sharpen top-k (also REST).
+- **Named vector `default`:** the collections store a single **named** vector called **`default`** (self-provided, vectorizer `none`). The v3 TS client auto-targets the only vector, so `hybrid(q, { vector })` / `nearVector` just work. If you ever query via REST/GraphQL, read it as `_additional { vectors { default } }` — the legacy singular `_additional { vector }` returns **empty** for named vectors.
 - **Weaviate TS client connect:**
 
 ```ts
@@ -209,19 +210,41 @@ labor, public_procurement, social_security, tax, transport
 
 ---
 
-## 8. Operational caveats (do not skip)
+## 8. Cross-lingual retrieval (Greek question → English content)
+
+A lawyer asks in Greek; the relevant passage may be embedded as **English** — an annexed treaty, a UN Security Council resolution, an EU instrument. This works (verified on the live `Α΄18/2024` doc, UNSC Res 2700) because **both** hybrid legs bridge languages:
+
+- **Vector leg:** `voyage-context-3` is multilingual, so the Greek query vector lands near the English chunk's vector for the same meaning.
+- **Keyword (BM25) leg:** every chunk — *including English ones* — carries a **Greek `chunk_summary` + Greek `keywords`**, generated at ingest regardless of source language (verified: 9/9 English chunks). So a Greek term matches an English chunk via its Greek metadata, even though that chunk's own `text_stemmed`/`text_normalized` are English.
+
+`rerank-2.5` (also multilingual) re-scores Greek-query ↔ English-candidate well — keep it in the loop.
+
+**Retrieval rules:**
+1. **Never filter `language` to exclude non-Greek.** Filtering `language == "el"` drops exactly the English-only content the question needs. Use `language` only to *prefer / label*. "English-bearing" = `language ∈ {en, mixed}`.
+2. **Dedupe bilingual twins.** A bilingual gazette (a Greek act publishing a foreign-language instrument) embeds the **same paragraph twice** — once `en`, once `el`. A Greek query surfaces both; collapse near-duplicates (by `chunk_summary`/cosine) and **keep the Greek twin** for the citation.
+
+**Answer-composition rules (legal correctness — this is a lawyer-facing tool):**
+3. **Prefer the official Greek text as the quoted/cited source.** When a Greek version exists in the corpus (it usually will — the gazette publishes the Greek translation), cite *that*; use the English only as supporting context. Do **not** translate the English yourself when an official Greek exists — an LLM translation can diverge from the published legal wording.
+4. **When content is English-only** (no Greek version in the corpus), the synthesis LLM may translate at answer time, but must **label it explicitly as an unofficial / working translation** so the lawyer knows it is not the authoritative text.
+5. **Answer in the user's language.** Instruct the LLM to reply in Greek (match the question), synthesizing from whatever-language chunks were retrieved — trivial for a modern LLM.
+
+> **Reverse direction** (English question → Greek-only content) is weaker: `semantic_tags_en` (the English-tag bridge field) is currently **empty**, so an English query leans only on the multilingual vector. Out of scope for the Greek-lawyer flow; revisit if you add English-language querying.
+
+---
+
+## 9. Operational caveats (do not skip)
 
 - **Run `cli consolidate` after every backfill** (ingestion side). The version timeline (`valid_from`/`valid_to`/`is_current`) is **materialized** by that pass. If new older laws were embedded but consolidate didn't re-run, the timeline is stale. (This is the pipeline's job, but your answers depend on it — surface "as of last consolidation" if you must.)
 - **`resolved = false` edges** mean the target law isn't ingested yet (you're still backfilling). Treat them as **"known change, older law pending"** rather than dropping them — they're exactly the chain links that complete as the backfill goes further back.
 - **Canonical-id consistency is the join.** If a chain looks broken, it's almost always an id/granularity mismatch (e.g. an edge targeting `…#αρ.13Α.παρ.Β.περ.7` vs an article node `…#αρ.13Α`). Prefer the `target_law_number` + `target_article_number` filter (article-level) for chains; it's robust to paragraph/case suffixes. The ingestion side runs `cli graph-status` to report dangling/mismatched targets.
 - **Multi-tenant:** `gr` on every call.
 - **Vectors are external (voyage):** never rely on Weaviate to embed the query; you supply the 1024-d voyage `input_type="query"` vector.
-- **Language:** chunks are `el`/`en`/`mixed`; voyage-context-3 is multilingual, so a Greek query can still retrieve an English passage (e.g. an annexed treaty/UN resolution) — do **not** filter out non-Greek `language`.
+- **Language / cross-lingual:** chunks are `el`/`en`/`mixed`; a Greek query retrieves English passages fine, and every chunk carries Greek `chunk_summary`/`keywords` — **never filter `language` to exclude non-Greek**, and dedupe EN/EL twins. Full contract in **§8**.
 - **Don't re-chunk / don't summarize into the vector:** the chunk is already the unit; `document_summary` is document-level metadata, not a per-chunk vector input.
 
 ---
 
-## 9. Minimal field cheat-sheet
+## 10. Minimal field cheat-sheet
 
 - **Find provisions (semantic):** `Jun2026GRLegaDocs` → `chunk_text` (vector+BM25), filter `legal_domain`/`domain_dkn`/`is_current`/`document_type`.
 - **List changes to a law:** `Jun2026Amendment` → filter `target_law_number`, sort `effective_date` desc.
