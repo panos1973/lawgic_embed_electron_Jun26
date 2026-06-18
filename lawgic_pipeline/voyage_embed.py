@@ -23,6 +23,11 @@ _client = None
 CONTEXT_WINDOW_TOKENS = 32_000
 MAX_CHUNKS = 16_000          # voyage per-request chunk cap
 SAFETY = 0.75
+# Oversize chunks are split, embedded as SEPARATE documents, and pooled. Keep each
+# sub-segment well under the window: the char→token estimate under-counts dense
+# OCR'd Greek/English, so a piece we measured at ~24k tokens measured ~32k+ at the
+# API and was rejected. 0.45 leaves ~2.2x head-room against that under-count.
+OVERSIZE_SAFETY = 0.45
 # Greek legal text tokenizes DENSELY: ~1.5 chars/token (the old embedder's
 # proven value). Using 3 here under-counted by ~2x, so a window we estimated at
 # 23k was really ~46k tokens and Voyage rejected it (>32k). Stay conservative.
@@ -153,26 +158,39 @@ def embed_law_chunks(ordered_chunks: list[str],
         # (e.g. a giant article or table). Split it, embed the pieces, and pool
         # back to ONE vector so the 1-vector-per-chunk contract is preserved.
         if len(span) == 1 and _est_tokens(span[0]) > budget:
-            segs = _split_oversized(span[0], budget)
-            log.warning("batch %d/%d: oversized chunk ~%d tok -> %d sub-segments (pooled)",
-                        bi, len(batches), _est_tokens(span[0]), len(segs))
+            # Split the over-window chunk and embed EACH sub-segment as its OWN
+            # document. Sending them together (inputs=[segs]) does NOT help — the
+            # 32k limit is per input document (the SUM of its chunks), so the
+            # combined document is still oversize. That was the bug that rejected
+            # large bilingual annexes ("the example at index 0 ... too many
+            # tokens"). Embed per-segment, then mean-pool to one vector so the
+            # 1-vector-per-chunk contract holds.
+            subseg_budget = int(CONTEXT_WINDOW_TOKENS * OVERSIZE_SAFETY)
+            segs = _split_oversized(span[0], subseg_budget)
+            log.warning("batch %d/%d: oversized chunk ~%d tok -> %d sub-segment(s), "
+                        "embedded separately + pooled", bi, len(batches),
+                        _est_tokens(span[0]), len(segs))
             if progress:
                 progress(f"batch {bi}/{len(batches)}: oversized chunk → "
-                         f"{len(segs)} sub-segments (pooled)")
-            try:
-                r = ratelimit.with_retry(
-                    lambda: client().contextualized_embed(
-                        inputs=[segs], model=config.EMBED_MODEL,
-                        input_type="document", output_dimension=config.EMBED_DIM),
-                    provider="voyage")
-            except Exception as e:
-                log.exception("batch %d/%d FAILED (oversized split): %s", bi, len(batches), e)
-                if progress:
-                    progress(f"batch {bi}/{len(batches)} failed: {e}")
-                raise
-            out.append(_pool(list(r.results[0].embeddings)))
+                         f"{len(segs)} sub-segment(s), embedded separately + pooled")
+            seg_vecs: list[list[float]] = []
+            for seg in segs:
+                try:
+                    rr = ratelimit.with_retry(
+                        lambda seg=seg: client().contextualized_embed(
+                            inputs=[[seg]], model=config.EMBED_MODEL,
+                            input_type="document", output_dimension=config.EMBED_DIM),
+                        provider="voyage")
+                except Exception as e:
+                    log.exception("batch %d/%d FAILED (oversized split): %s",
+                                  bi, len(batches), e)
+                    if progress:
+                        progress(f"batch {bi}/{len(batches)} failed: {e}")
+                    raise
+                seg_vecs.append(list(rr.results[0].embeddings[0]))
+            out.append(_pool(seg_vecs))
             dt = time.perf_counter() - bt
-            log.info("batch %d/%d: 1 oversized chunk (%d segs) in %.2fs",
+            log.info("batch %d/%d: 1 oversized chunk (%d segs, separate) in %.2fs",
                      bi, len(batches), len(segs), dt)
             continue
 

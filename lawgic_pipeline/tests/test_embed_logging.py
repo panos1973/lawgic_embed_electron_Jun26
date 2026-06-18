@@ -139,6 +139,37 @@ def test_embed_oversized_preserves_count_in_mixed_law(monkeypatch):
     assert len(out) == len(chunks)               # 5 in -> 5 out, order preserved
 
 
+class _RecordingClient:
+    """Records the `inputs` of every contextualized_embed call."""
+    def __init__(self):
+        self.inputs = []
+
+    def contextualized_embed(self, inputs, model, input_type, output_dimension):
+        self.inputs.append(inputs)
+        span = inputs[0]
+        embs = [[0.1] * output_dimension for _ in span]
+        return type("R", (), {"results": [type("X", (), {"embeddings": embs})()]})()
+
+
+def test_oversized_chunk_embedded_as_separate_under_budget_documents(monkeypatch):
+    # regression: an over-window chunk must be embedded as SEPARATE single-chunk
+    # documents (sending the sub-segments together would re-form an oversize
+    # document — the bug that rejected the bilingual treaty annex). Each request's
+    # document must fit the sub-segment budget.
+    rec = _RecordingClient()
+    monkeypatch.setattr(ve, "client", lambda: rec)
+    monkeypatch.setattr(ve, "CONTEXT_WINDOW_TOKENS", 100)
+    monkeypatch.setattr(ve, "SAFETY", 0.75)
+    huge = "Πρόταση ένα. " * 200                  # well over the window, alone
+    out = ve.embed_law_chunks([huge])
+    assert len(out) == 1 and len(out[0]) == config.EMBED_DIM   # one pooled vector
+    assert len(rec.inputs) > 1                                 # split into many requests
+    sub_budget = int(ve.CONTEXT_WINDOW_TOKENS * ve.OVERSIZE_SAFETY)
+    for inp in rec.inputs:
+        assert len(inp) == 1 and len(inp[0]) == 1              # inputs=[[seg]] — one doc, one chunk
+        assert ve._est_tokens(inp[0][0]) <= sub_budget         # no document over budget
+
+
 def test_embed_emits_progress(monkeypatch):
     fake = _FakeClient()
     monkeypatch.setattr(ve, "client", lambda: fake)
