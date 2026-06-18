@@ -18,6 +18,37 @@ def _law_with(text):
     return law
 
 
+def _law_with_chunk(text, chunk_type):
+    law = Law(instrument_id="ν.5090/2024", instrument_key="N5090/2024",
+              instrument_type=TYPE_NOMOS)
+    law.provisions.append(Provision(
+        canonical_id=("ν.5090/2024#παραρτ.1" if chunk_type == "annex"
+                      else "ν.5090/2024#αρ.1"),
+        instrument_id="ν.5090/2024", instrument_key="N5090/2024",
+        instrument_type=TYPE_NOMOS, article_no="1",
+        chunk_type=chunk_type, text_in_force=text))
+    return law
+
+
+# a ratified treaty's OWN amending language ("Article X is replaced …") must not be
+# mined as amendments OF the enacting Greek law (the self-targeting false edges).
+_TREATY_EDIT = "Το άρθρο 1 της Συμφωνίας αντικαθίσταται ως εξής: «νέο κείμενο της Συμφωνίας»."
+
+
+def test_amend_skips_annex_ratified_content():
+    law = _law_with_chunk(_TREATY_EDIT, "annex")
+    extract_amendments(law)
+    assert law.amendments == []          # annex = verbatim ratified text, not mined
+
+
+def test_amend_still_mines_non_annex_provisions():
+    # control: the SAME text in a normal article DOES yield an edge — proving the
+    # skip is annex-specific, not the text being filtered for some other reason.
+    law = _law_with_chunk(_TREATY_EDIT, "article")
+    extract_amendments(law)
+    assert len(law.amendments) >= 1
+
+
 def test_resolve_full_nested_reference():
     tid, scope, resolved = _resolve_reference(
         "Η παρ. 2 του άρθρου 24 του ν. 4675/2024 ", "ν.5090/2024")
