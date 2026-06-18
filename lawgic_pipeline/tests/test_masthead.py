@@ -142,6 +142,31 @@ def test_pnp_has_no_number_no_warning_for_number():
     assert "instrument number not found" not in r["warnings"]
 
 
+# A ratification law whose TITLE cites a foreign "Ψήφισμα" (e.g. ν.5011/2023
+# ratifying ACCOBAMS amendments adopted "με το Ψήφισμα Α/4.1"). The bare ΨΗΦΙΣΜΑ
+# keyword must NOT outrank the anchored ΝΟΜΟΣ header that sits above it.
+NOMOS_RATIFICATION_CITING_PSIFISMA = """ΕΦΗΜΕΡΙΔΑ ΤΗΣ ΚΥΒΕΡΝΗΣΕΩΣ
+17 Ιανουαρίου 2023   ΤΕΥΧΟΣ ΠΡΩΤΟ   Αρ. Φύλλου 9
+ΝΟΜΟΣ ΥΠ' ΑΡΙΘΜ. 5011
+Κύρωση της Συμφωνίας για τη διατήρηση των κητωδών και των τροποποιήσεων που
+υιοθετήθηκαν με το Ψήφισμα Α/4.1 της 12ης Νοεμβρίου 2010.
+Η ΠΡΟΕΔΡΟΣ ΤΗΣ ΕΛΛΗΝΙΚΗΣ ΔΗΜΟΚΡΑΤΙΑΣ
+"""
+
+
+def test_nomos_ratification_not_misread_as_psifisma():
+    # regression: earliest-position type detection — the numbered ΝΟΜΟΣ header wins
+    # over a "Ψήφισμα" cited later in the title (which previously forced PSIFISMA +
+    # a missing number, routing the law to review).
+    r = parse_masthead(NOMOS_RATIFICATION_CITING_PSIFISMA)
+    assert r["instrument_type"] == TYPE_NOMOS
+    assert r["number"] == 5011
+    assert r["year"] == 2023
+    assert r["fek_series"] == "Α"
+    assert "Κύρωση" in r["title"]          # real title recovered
+    assert "ΠΡΟΕΔΡΟΣ" not in r["title"]    # promulgation still excluded
+
+
 def test_empty_text_is_safe():
     r = parse_masthead("")
     assert r["instrument_type"] is None

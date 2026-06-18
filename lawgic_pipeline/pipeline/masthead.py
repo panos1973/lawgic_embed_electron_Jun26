@@ -165,15 +165,25 @@ def parse_masthead(text: str) -> dict:
     instrument_type: Optional[str] = None
     number: Optional[int] = None
     header_end = 0
-    for itype, pat in _TYPE_PATTERNS:
+    # Choose the instrument-type header that appears EARLIEST in the document head,
+    # not merely the first pattern in list order. The real masthead header sits at
+    # the very top; a bare keyword mentioned later in the title/body — e.g.
+    # "Ψήφισμα" (a treaty-ratification law citing a foreign resolution) or
+    # "υπουργική απόφαση" — must not outrank an anchored "ΝΟΜΟΣ ΥΠ' ΑΡΙΘΜ. N"
+    # header. Ties (same start offset) fall back to list order, which is ordered
+    # most-specific-first, so multi-word headers (ΑΝΑΓΚΑΣΤΙΚΟΣ ΝΟΜΟΣ) still win over
+    # the bare ΝΟΜΟΣ they contain (their match simply starts earlier).
+    best: Optional[tuple] = None       # (start, list_index, itype, match)
+    for idx, (itype, pat) in enumerate(_TYPE_PATTERNS):
         m = pat.search(head)
-        if m:
-            instrument_type = itype
-            header_end = m.end()
-            if "num" in m.groupdict() and m.group("num"):
-                number = int(m.group("num"))
-            break
-    if instrument_type is None:
+        if m and (best is None or (m.start(), idx) < (best[0], best[1])):
+            best = (m.start(), idx, itype, m)
+    if best is not None:
+        instrument_type, _m = best[2], best[3]
+        header_end = _m.end()
+        if "num" in _m.groupdict() and _m.group("num"):
+            number = int(_m.group("num"))
+    else:
         warnings.append("instrument_type not found in masthead")
 
     # number on a separate line right after the type header
