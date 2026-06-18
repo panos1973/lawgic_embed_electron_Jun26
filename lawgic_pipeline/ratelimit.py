@@ -15,6 +15,7 @@ import threading
 import time
 
 import logsetup
+from errors import RateLimitExhausted
 
 log = logsetup.get("ratelimit")
 
@@ -117,8 +118,13 @@ def with_retry(fn, *, provider: str, max_attempts: int = 5, base: float = 2.0):
             # do not retry hard, non-transient failures (e.g. >32k token limit)
             if "too many tokens" in str(e).lower() or "context window" in str(e).lower():
                 raise
-            if not _is_retryable(e) or attempt == max_attempts:
-                raise
+            if not _is_retryable(e):
+                raise                              # non-transient -> surface now
+            if attempt == max_attempts:
+                # a transient error that survived EVERY retry is no longer a blip —
+                # it is systemic (throttling / exhausted quota). Signal a PAUSE so
+                # the run stops cleanly instead of erroring document after document.
+                raise RateLimitExhausted(provider, e) from e
             delay = base ** attempt + random.uniform(0, 1.0)
             log.warning("%s call failed (attempt %d/%d), retrying in %.1fs: %s",
                         provider, attempt, max_attempts, delay, str(e)[:160])
