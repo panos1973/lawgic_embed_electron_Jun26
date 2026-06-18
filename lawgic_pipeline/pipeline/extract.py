@@ -112,18 +112,19 @@ def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
                 warnings.append(
                     f"{len(table_pages)} table page(s) detected; Azure DI not "
                     "configured, using pdfplumber markdown tables")
-        # Optional: READ each table page as an image with the multimodal LLM
-        # (source-agnostic — digital or photocopied) and splice in a faithful
-        # narration + markdown. Gated by TABLE_VISION; runs ONLY on table pages;
-        # degrades to the existing markdown if it returns None.
-        if getattr(config, "TABLE_VISION", False) and table_pages:
-            from pipeline.table_vision import narrate_table_page
-            for pg in table_pages:
-                r = narrate_table_page(path, pg)
+        # Optional: READ each table OR scanned/figure page as an image with the
+        # multimodal LLM (source-agnostic — digital or photocopied; table, seal or
+        # figure) and splice in a faithful transcription + Greek narration. Gated by
+        # TABLE_VISION; runs ONLY on the flagged pages (tables ∪ poor-OCR pages);
+        # degrades to the existing extracted text if it returns None.
+        if getattr(config, "TABLE_VISION", False) and upgrade_pages:
+            from pipeline.table_vision import read_page_vision
+            for pg in upgrade_pages:
+                r = read_page_vision(path, pg)
                 if r and 1 <= pg <= len(pages_markdown):
                     pages_markdown[pg - 1] = r
                 elif r is None:
-                    warnings.append(f"table vision: page {pg} not read, kept markdown")
+                    warnings.append(f"page vision: page {pg} not read, kept extracted text")
         text = "\n\n".join(m for m in pages_markdown if m)
 
     # Masthead is parsed on the full text (it needs the cover block); the body

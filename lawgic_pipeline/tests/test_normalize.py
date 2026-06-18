@@ -6,6 +6,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pipeline.normalize import (normalize_glyphs, strip_furniture,  # noqa: E402
                                 cid_ratio)
+from normalize import collapse_doubled_glyphs, normalize_display  # noqa: E402
+
+
+def test_collapse_doubled_glyph_headings():
+    # bold/double-struck headings get every glyph read twice -> collapse whole tokens
+    assert collapse_doubled_glyphs("ΔΔΙΙΚΚΑΑΙΙΟΟΛΛΟΟΓΓΗΗΤΤΙΙΚΚΑΑ") == "ΔΙΚΑΙΟΛΟΓΗΤΙΚΑ"
+    assert collapse_doubled_glyphs("ΟΟΡΡΟΟΙΙ") == "ΟΡΟΙ"
+    assert collapse_doubled_glyphs("ΜΜ..ΔΔ..ΕΕ..") == "Μ.Δ.Ε."
+    # real Greek double letters (σσ/μμ/νν/γγ) and numbers are left intact
+    assert collapse_doubled_glyphs("θάλασσα γράμμα Άννα συγγραφή") == "θάλασσα γράμμα Άννα συγγραφή"
+    assert collapse_doubled_glyphs("1122 200200") == "1122 200200"
+    # integrated through normalize_display
+    assert normalize_display(
+        "ΔΔΙΙΚΚΑΑΙΙΟΟΛΛΟΟΓΓΗΗΤΤΙΙΚΚΑΑ ΥΥΠΠΟΟΨΨΗΗΦΦΙΙΟΟΤΤΗΗΤΤΑΑΣΣ"
+    ) == "ΔΙΚΑΙΟΛΟΓΗΤΙΚΑ ΥΠΟΨΗΦΙΟΤΗΤΑΣ"
 
 
 def test_latin_homoglyph_nomos():

@@ -22,19 +22,21 @@ import logsetup
 
 log = logsetup.get("table_vision")
 
-# Stable instruction prefix (cacheable). Faithfulness is the priority — exact cell
-# values feed table_json; the narration is only a retrieval aid.
+# Stable instruction prefix (cacheable). Faithfulness is the priority — exact values
+# feed table_json/text; the narration is only a retrieval aid. Works for table pages
+# AND scanned/figure pages (a seal, a form template, a poorly-OCR'd page).
 _SYSTEM = (
-    "You are given a single page from a Greek official gazette (ΦΕΚ) that contains "
-    "a table. Do two things, FAITHFULLY — transcribe every row and column with exact "
-    "values, never invent or omit a row:\n"
-    "1) `markdown`: the table as a GitHub-markdown grid (a header row, a |---| "
-    "separator, then one row per line).\n"
-    "2) `narration`: a concise GREEK prose explanation, roughly one short clause per "
-    "row, so the table can be found by meaning.\n"
+    "You are given a single page from a Greek official gazette (ΦΕΚ). Read it and "
+    "return its content FAITHFULLY — never invent or omit anything:\n"
+    "1) `markdown`: transcribe ALL text exactly (Greek and English); render any TABLE "
+    "as a GitHub-markdown grid (header row, a |---| separator, one row per line); and "
+    "describe any figure/seal/logo briefly in brackets, e.g. [σφραγίδα: Πανεπιστήμιο "
+    "Πατρών].\n"
+    "2) `narration`: a concise GREEK prose summary of what the page contains (for a "
+    "table, roughly one short clause per row), so it can be found by meaning.\n"
     'Return ONLY JSON: {"markdown": "...", "narration": "..."}.'
 )
-_USER = "Read the table on this page."
+_USER = "Read this page."
 
 
 def _render_png(path: str, page_no: int, dpi: int = 200) -> Optional[bytes]:
@@ -62,11 +64,11 @@ def _render_png(path: str, page_no: int, dpi: int = 200) -> Optional[bytes]:
                 pass
 
 
-def narrate_table_page(path: str, page_no: int) -> Optional[str]:
-    """Read the table on `page_no` with the multimodal LLM and return
-    'narration\\n\\nmarkdown' (narration first so the vector is semantic; the
-    faithful markdown follows so tables.py can still recover table_json and the
-    grid shows for display). Returns None on any failure — the caller then keeps
+def read_page_vision(path: str, page_no: int) -> Optional[str]:
+    """Read `page_no` (a table OR a scanned/figure page) with the multimodal LLM and
+    return 'narration\\n\\nmarkdown' (narration first so the vector is semantic; the
+    faithful markdown/text follows so tables.py can still recover table_json and the
+    content shows for display). Returns None on any failure — the caller then keeps
     the existing extracted text."""
     png = _render_png(path, page_no)
     if not png:
