@@ -139,6 +139,13 @@ def extract_amendments(law: Law) -> Law:
     own = law.instrument_id
     ordinal = 0
     for p in law.provisions:
+        # Annex chunks are verbatim RATIFIED/ENACTED text (a treaty, a codified
+        # body). Their internal "Article X is replaced …" / «… αντικαθίσταται …»
+        # lines are the instrument's OWN amendments, not amendments this Greek law
+        # makes — mining them produces self-targeting false edges that pollute the
+        # graph. Skip them.
+        if p.chunk_type == "annex":
+            continue
         t = p.text_in_force
         # the law the host article declares it is amending (heading), if any
         declared_iid, declared_art = _declared_target(t)

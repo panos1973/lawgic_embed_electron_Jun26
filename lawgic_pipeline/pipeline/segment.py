@@ -189,6 +189,38 @@ def _structural_path(state: dict) -> list[str]:
     return out
 
 
+# A single article/annex body larger than this is not one provision — it is a
+# ratified/enacted instrument (an international treaty, a whole code) that the
+# article merely introduces ("Κυρώνεται … ως εξής: <TREATY>"). Sliced whole into
+# one chunk it overflows the 32k embedder (pooled into a blurry mega-vector) AND
+# its internal "Article X is replaced …" lines get mis-mined as amendments to THIS
+# law (self-targeting false edges). So emit such a body as ANNEX sub-chunks:
+# retrievable at sub-chunk granularity, and excluded from amendment extraction
+# (annex = verbatim ratified text, not amending provisions of the enacting law).
+# The threshold sits far above any real single article, so normal laws are
+# untouched (it only fires on a body that would itself overflow the embedder).
+_ENACTED_BODY_MAX = 30_000
+
+
+def _annex_subchunks(law: Law, state: dict, base_loc: str, body: str) -> None:
+    """Emit `body` as one or more ANNEX provisions, sub-chunked under base_loc."""
+    secs = _split_document_body(body)
+    for i, sec in enumerate(secs, 1):
+        loc = base_loc if len(secs) == 1 else f"{base_loc}.τμ.{i}"
+        path = " > ".join([law.instrument_id, *_structural_path(state), loc])
+        law.provisions.append(Provision(
+            canonical_id=f"{law.instrument_id}#{loc}",
+            instrument_id=law.instrument_id, instrument_key=law.instrument_key,
+            instrument_type=law.instrument_type, fek_series=law.fek_series,
+            fek_number=law.fek_number, fek_date=law.fek_date,
+            article_no=loc, article_title=_first_line(sec),
+            level="annex", chunk_type="annex",
+            book=state["book"], part=state["part"], chapter=state["chapter"],
+            hierarchy_path=path, text_in_force=sec,
+            text_normalized=fold_for_bm25(sec), text_stemmed=stem_text(sec),
+            content_hash=hashlib.sha256(sec.encode()).hexdigest()))
+
+
 def segment(text: str, law: Law) -> Law:
     """Populate law.provisions (article-level) with full hierarchy context."""
     # Headers inside « » quoted blocks are inserted/restated text of ANOTHER law
@@ -223,6 +255,9 @@ def segment(text: str, law: Law) -> Law:
         if kind == "annex":
             token = (m.group(1) or "").strip()
             loc = f"παραρτ.{token}" if token else "παραρτ"
+            if len(body) > _ENACTED_BODY_MAX:      # huge annex -> retrievable sub-chunks
+                _annex_subchunks(law, state, loc, body)
+                continue
             cid = f"{law.instrument_id}#{loc}"
             path = " > ".join([law.instrument_id, *_structural_path(state),
                                f"ΠΑΡΑΡΤΗΜΑ {token}".strip()])
@@ -257,6 +292,12 @@ def segment(text: str, law: Law) -> Law:
         if _REF_BODY.match(body):
             continue
         seen_articles.add(art_no)
+        if len(body) > _ENACTED_BODY_MAX:
+            # this "article" body swallowed a ratified/enacted instrument (e.g. a
+            # treaty κύρωση whose verbatim text has no «»/Άρθρο structure we could
+            # split on) -> emit it as annex sub-chunks instead of one mega-article.
+            _annex_subchunks(law, state, f"παραρτ.{art_no}", body)
+            continue
         title = _first_line(body)
         cid = make_provision_id(law.instrument_id, art_no)
         path = " > ".join([law.instrument_id, *_structural_path(state),

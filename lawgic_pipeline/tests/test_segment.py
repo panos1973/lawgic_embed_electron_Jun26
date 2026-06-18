@@ -8,6 +8,31 @@ from pipeline.segment import segment  # noqa: E402
 from models import Law, TYPE_NOMOS  # noqa: E402
 
 
+def test_oversize_article_body_becomes_annex_subchunks():
+    # an "article" whose body swallowed a ratified instrument (a treaty κύρωση,
+    # ~44k chars here) must NOT become one mega-article (overflows the embedder +
+    # spawns self-targeting false amendments). It becomes ANNEX sub-chunks.
+    from pipeline.segment import _ENACTED_BODY_MAX
+    law = Law(instrument_id="ν.5011/2023", instrument_key="N5011/2023",
+              instrument_type=TYPE_NOMOS)
+    body = "Κυρώνεται η Συμφωνία ως εξής:\n" + ("Διάταξη της Συμφωνίας. " * 2000)
+    assert len(body) > _ENACTED_BODY_MAX
+    law = segment("Άρθρο πρώτο\n" + body + "\n", law)
+    annex = [p for p in law.provisions if p.chunk_type == "annex"]
+    arts = [p for p in law.provisions if p.chunk_type == "article"]
+    assert len(annex) > 1 and not arts                       # sub-chunked, no mega-article
+    assert all(len(p.text_in_force) <= 4000 for p in annex)  # each fits the embedder
+    assert all(p.canonical_id.startswith("ν.5011/2023#παραρτ.πρώτο") for p in annex)
+
+
+def test_normal_article_unaffected_by_oversize_cap():
+    law = Law(instrument_id="ν.5090/2024", instrument_key="N5090/2024",
+              instrument_type=TYPE_NOMOS)
+    law = segment("Άρθρο 1\nΚανονικό σύντομο άρθρο με λίγο κείμενο.\n", law)
+    assert [p.chunk_type for p in law.provisions] == ["article"]
+    assert law.provisions[0].canonical_id == "ν.5090/2024#αρ.1"
+
+
 def test_short_no_article_document_stays_single_full_chunk():
     # backward-compatible: a short decision (no Άρθρα) is still ONE '#full' chunk
     law = Law(instrument_id="Β΄2/2025", instrument_key="x", instrument_type=TYPE_NOMOS)
