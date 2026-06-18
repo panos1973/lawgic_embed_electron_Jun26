@@ -63,6 +63,27 @@ def test_long_no_article_document_splits_into_vectorizable_sections():
     assert all(f"{i}. The Security Council" in joined for i in range(1, 30))
 
 
+def test_chunking_never_splits_a_paragraph():
+    from pipeline.segment import _split_document_body
+    paras = [f"Παράγραφος {i}: " + "ουσιαστικό περιεχόμενο που συνεχίζεται. " * 20
+             for i in range(1, 8)]                          # ~7 paras, ~900 chars each
+    body = "\n\n".join(paras)
+    secs = _split_document_body(body)
+    assert len(secs) > 1                                    # packed into several chunks
+    # every original paragraph lands INTACT inside exactly one section (never split)
+    for p in paras:
+        assert sum(p.strip() in s for s in secs) == 1, f"paragraph split: {p[:30]}"
+
+
+def test_chunking_keeps_a_markdown_table_whole():
+    from pipeline.segment import _split_document_body
+    table = "\n".join(["| Κωδικός | Μάθημα | ECTS |", "| --- | --- | --- |"]
+                      + [f"| ΒΤ_{i} | Μάθημα {i} | 5 |" for i in range(1, 30)])
+    body = ("Πρόλογος της απόφασης. " * 90) + "\n\n" + table + "\n\n" + ("Επίλογος. " * 5)
+    secs = _split_document_body(body)
+    assert any(table.strip() in s for s in secs)            # table never split mid-row
+
+
 def test_spelled_ordinal_articles():
     law = Law(instrument_id="Π.Ν.Π.1/2023", instrument_key="x",
               instrument_type=TYPE_NOMOS)

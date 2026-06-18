@@ -71,10 +71,58 @@ def _first_line(block: str) -> str:
 _DOC_CHUNK_CHARS = 2000
 
 
+# A numbered/lettered clause start ("1.", "12)", "α)", "Α.") — a paragraph boundary
+# in flat decisions, so each clause becomes its own packable unit.
+_CLAUSE_START = re.compile(r"^\s*(?:\d{1,3}|[Α-Ωα-ωA-Za-z])[.)]\s")
+
+
+def _is_table_row(line: str) -> bool:
+    s = line.strip()
+    return len(s) >= 3 and s[0] == "|" and s[-1] == "|"
+
+
+def _paragraphs(body: str) -> list[str]:
+    """Split a body into atomic blocks: blank-line-separated paragraphs, each
+    numbered clause, and each markdown table (kept whole). Content-lossless."""
+    paras: list[str] = []
+    cur: list[str] = []
+
+    def flush():
+        if cur:
+            j = "\n".join(cur).strip()
+            if j:
+                paras.append(j)
+            cur.clear()
+
+    prev_table = False
+    for line in body.split("\n"):
+        if not line.strip():                          # blank line -> boundary
+            flush()
+            prev_table = False
+            continue
+        is_tbl = _is_table_row(line)
+        # boundary: a table<->text transition, or a new (non-table) numbered clause
+        if cur and (is_tbl != prev_table
+                    or (not is_tbl and _CLAUSE_START.match(line))):
+            flush()
+        cur.append(line)
+        prev_table = is_tbl
+    flush()
+    return paras
+
+
+def _hard_wrap(text: str, target: int) -> list[str]:
+    """Last resort: slice a single over-budget paragraph into target-sized pieces."""
+    return [text[i:i + target] for i in range(0, len(text), target)]
+
+
 def _split_document_body(body: str, target: int = _DOC_CHUNK_CHARS) -> list[str]:
-    """Pack a no-Άρθρο body into <=~target-char sections, line by line, preferring
-    blank-line and numbered-clause boundaries. A single over-long line is hard-cut.
-    Every character lands in exactly one section. Returns [body] when it fits."""
+    """Pack a no-Άρθρο body into <=~target-char sections at PARAGRAPH boundaries —
+    never splitting a paragraph, numbered clause, or markdown table mid-way (only a
+    single paragraph FAR larger than the budget is hard-wrapped, as a last resort,
+    so a chunk never overflows the embedder). Content-lossless: every non-whitespace
+    character lands in exactly one section. Returns [body] when it fits in one chunk
+    (a short decision stays whole)."""
     body = body.strip()
     if len(body) <= target:
         return [body]
@@ -85,25 +133,22 @@ def _split_document_body(body: str, target: int = _DOC_CHUNK_CHARS) -> list[str]
     def flush():
         nonlocal cur, cur_len
         if cur:
-            joined = "\n".join(cur).strip()
+            joined = "\n\n".join(cur).strip()
             if joined:
                 sections.append(joined)
             cur, cur_len = [], 0
 
-    for line in body.split("\n"):
-        if len(line) > target:                       # giant unbroken line -> hard wrap
+    for p in _paragraphs(body):
+        if len(p) > target:
+            # a single paragraph over budget: emit on its own — kept WHOLE unless it
+            # alone overflows badly, then hard-wrapped so the embedder never chokes.
             flush()
-            for i in range(0, len(line), target):
-                sections.append(line[i:i + target])
+            sections.extend(_hard_wrap(p, target) if len(p) > int(target * 1.5) else [p])
             continue
-        # start a new section at a numbered-clause boundary once the current one has
-        # real content, so "1. …", "2. …" tend to begin a section rather than split
-        starts_clause = bool(re.match(r"\s*\d{1,3}[.)]\s", line))
-        if cur_len and (cur_len + len(line) + 1 > target
-                        or (starts_clause and cur_len > target // 2)):
-            flush()
-        cur.append(line)
-        cur_len += len(line) + 1
+        if cur_len and cur_len + len(p) + 2 > target:
+            flush()                                   # adding p would overflow -> close
+        cur.append(p)
+        cur_len += len(p) + 2
     flush()
     return [s for s in sections if s] or [body]
 
