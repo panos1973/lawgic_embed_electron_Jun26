@@ -358,6 +358,52 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
         raise RuntimeError(f"article load failed: {art.batch.failed_objects[:2]}")
 
 
+def update_law_enrichment(client, law: Law, tenant: str = None) -> int:
+    """Patch LLM-enrichment + parent-title props onto ALREADY-embedded chunks, BY
+    their per-version UUID, WITHOUT touching the vector (data.update patches props
+    and keeps the existing vector). Powers the decoupled `cli enrich` backfill —
+    embed once (deterministic, fast), then fill summaries / keywords / document
+    title later and cheaply, no re-embedding. Targets the ENACTED-version chunks
+    (valid_from = enacted date) that load_law wrote. Objects that aren't present
+    (id/extraction drift) are skipped. Returns the number of chunks updated.
+    """
+    tenant = tenant or law.jurisdiction or config.DEFAULT_TENANT
+    flat = client.collections.use(config.FLAT_COLLECTION).with_tenant(tenant)
+    art = client.collections.use(config.GRAPH_ARTICLE).with_tenant(tenant)
+    title = law.title or ""
+    title_stem = _stem(title)
+    updated = 0
+    for p in law.provisions:
+        vf = _enacted_valid_from(p, law)
+        common = {                                   # fields both collections carry
+            "chunk_summary": p.chunk_summary,
+            "chunk_summary_stemmed": _stem(p.chunk_summary),
+            "keywords": p.keywords,
+            "domain_eurovoc": p.domain_eurovoc,
+            "domain_dkn": p.domain_dkn,
+        }
+        flat_props = {k: v for k, v in {**common, "document_title": title,
+                                        "document_title_stemmed": title_stem}.items() if v}
+        art_props = {k: v for k, v in common.items() if v}
+        hit = False
+        if flat_props:
+            try:
+                flat.data.update(uuid=_flat_version_uuid(p.canonical_id, vf),
+                                 properties=flat_props)
+                hit = True
+            except Exception:                        # noqa: BLE001 — object absent
+                pass
+        if art_props:
+            try:
+                art.data.update(uuid=_art_version_uuid(p.canonical_id, vf),
+                                properties=art_props)
+            except Exception:                        # noqa: BLE001
+                pass
+        if hit:
+            updated += 1
+    return updated
+
+
 def _target_law_number(target_id: str) -> str:
     """'ν.4675/2024#αρ.24.παρ.2' -> '4675/2024' (denormalized for filtering)."""
     head = target_id.split("#", 1)[0]

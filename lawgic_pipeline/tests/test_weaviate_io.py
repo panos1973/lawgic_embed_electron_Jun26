@@ -729,6 +729,65 @@ def test_vf_str_normalizes_datetime_and_strings():
         wio._art_version_uuid("ν.1/2024#αρ.5", "2024-02-14T00:00:00Z")
 
 
+# --- update_law_enrichment: patch enrichment/title in place, keep vectors ---------
+class _UpdData:
+    def __init__(self, rec, name): self.rec, self.name = rec, name
+    def update(self, uuid, properties): self.rec.append((self.name, uuid, properties))
+
+
+class _UpdColl:
+    def __init__(self, rec, name): self.data = _UpdData(rec, name)
+    def with_tenant(self, t): return self
+
+
+class _UpdClient:
+    def __init__(self): self.rec = []
+
+    @property
+    def collections(self):
+        rec = self.rec
+
+        class C:
+            def use(s, name): return _UpdColl(rec, name)
+        return C()
+
+
+def test_update_law_enrichment_patches_both_collections_without_vector():
+    law = Law(instrument_id="ν.5090/2024", instrument_key="N5090/2024",
+              instrument_type=TYPE_NOMOS, title="Δοκιμαστικός Κώδικας", fek_date="2024-03-26")
+    p = Provision(canonical_id="ν.5090/2024#αρ.1", instrument_id="ν.5090/2024",
+                  instrument_key="N5090/2024", instrument_type=TYPE_NOMOS,
+                  article_no="1", chunk_type="article", text_in_force="κείμενο")
+    p.chunk_summary = "Σύντομη περίληψη."
+    p.keywords = ["εργασία", "σύμβαση"]
+    law.provisions.append(p)
+
+    c = _UpdClient()
+    n = wio.update_law_enrichment(c, law, tenant="gr")
+    assert n == 1
+    by = {name: props for name, _uuid, props in c.rec}
+    # both collections patched; NO vector is passed (update keeps the existing vector)
+    assert wio.config.FLAT_COLLECTION in by and wio.config.GRAPH_ARTICLE in by
+    flat = by[wio.config.FLAT_COLLECTION]
+    assert flat["chunk_summary"] == "Σύντομη περίληψη."
+    assert flat["keywords"] == ["εργασία", "σύμβαση"]
+    assert flat["document_title"] == "Δοκιμαστικός Κώδικας"      # title backfilled onto flat
+    art = by[wio.config.GRAPH_ARTICLE]
+    assert art["chunk_summary"] == "Σύντομη περίληψη."
+    assert "document_title" not in art                           # article has no such field
+
+
+def test_update_law_enrichment_skips_when_nothing_to_patch():
+    law = Law(instrument_id="ν.1/2024", instrument_key="N1/2024",
+              instrument_type=TYPE_NOMOS, fek_date="2024-01-01")     # no title
+    law.provisions.append(Provision(
+        canonical_id="ν.1/2024#αρ.1", instrument_id="ν.1/2024", instrument_key="N1/2024",
+        instrument_type=TYPE_NOMOS, article_no="1", chunk_type="article",
+        text_in_force="x"))                                          # no summary/keywords
+    c = _UpdClient()
+    assert wio.update_law_enrichment(c, law, tenant="gr") == 0 and c.rec == []
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

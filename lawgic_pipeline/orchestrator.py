@@ -253,3 +253,53 @@ def process_document(client, st: State, path: str,
         emit("error", str(e))
         log.exception("process error: %s — %s", doc_id, e)
         return "error"
+
+
+def enrich_document(client, path, progress=None) -> dict:
+    """Backfill enrichment for an ALREADY-embedded document, IN PLACE (no re-embed).
+
+    Re-runs the deterministic spine + the LLM enrich/summarize stages, then patches
+    the document node (title, summary) and the chunk enrichment props (summary /
+    keywords / domains) by canonical UUID — preserving the existing vectors. The
+    decoupled "embed fast once, enrich later/cheaply" path for bulk; also fills a
+    run that had no LLM key, and re-derives a missing title. No state DB, no
+    embedding. A credential / exhausted-quota failure raises FatalIngestError (the
+    caller pauses). Returns {"instruments", "chunks_updated"}.
+    """
+    def emit(stage, msg=""):
+        if progress:
+            progress(stage, msg)
+
+    ex = extract.extract_pdf(path)
+    text = normalize_display(ex.text)
+    mh = ex.masthead or {}
+    acts = multiact.split_acts(text, mh)
+    instruments = chunks = 0
+    for seg in acts:
+        law = _build_law(seg, mh)
+        if law is None:
+            continue
+        law = segment.segment(seg.text, law)
+        # deterministic amend + consolidate so text_in_force matches what was
+        # embedded (so summaries describe the in-force text). No LLM amend here.
+        law = amend.extract_amendments(law)
+        law = amend.consolidate(law)
+        law = refs.extract_external_refs(law)
+        emit("classify", law.instrument_id)
+        law = enrich.classify_domain(law)
+        law = enrich.classify_document_category(law)
+        law = enrich.classify_dkn(law)
+        emit("enrich", f"{law.instrument_id}: LLM enrichment ({len(law.provisions)} provisions)")
+        law = _stage(f"LLM ({config.LLM_PROVIDER})", "enrich (backfill)",
+                     lambda: enrich.enrich_llm(law, progress=lambda m: emit("enrich", m)))
+        law = _stage(f"LLM ({config.LLM_PROVIDER})", "summarize (document)",
+                     lambda: enrich.summarize_law(law))
+
+        def _patch(_law=law):
+            wio.load_document(client, _law)                 # doc node: title + summary
+            return wio.update_law_enrichment(client, _law)  # chunk props, keep vectors
+        n = _stage("Weaviate", "update", _patch)
+        instruments += 1
+        chunks += n
+        emit("update", f"{law.instrument_id}: {n} chunk(s) patched (no re-embed)")
+    return {"instruments": instruments, "chunks_updated": chunks}

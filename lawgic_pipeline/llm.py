@@ -116,3 +116,41 @@ def complete(system: str, user: str, want_json: bool = True,
     resp = ratelimit.with_retry(
         lambda: _client.chat.completions.create(**kwargs), provider=provider)
     return resp.choices[0].message.content or ""
+
+
+def complete_vision(system: str, user: str, image_b64: str, want_json: bool = True,
+                    max_tokens: int = 4096) -> str:
+    """Like complete(), but with a PNG image attached — for READING a table page.
+
+    `image_b64` is raw base64 of a PNG. Supported on the multimodal providers
+    (OpenAI / Azure gpt-4.1*, Gemini, Claude). Same rate-limit/retry path as complete().
+    """
+    _ensure_client()
+    model = model_name()
+    import ratelimit
+    provider = config.LLM_PROVIDER
+
+    if _kind == "anthropic":
+        content = [{"type": "text", "text": user},
+                   {"type": "image", "source": {"type": "base64",
+                    "media_type": "image/png", "data": image_b64}}]
+        kwargs = dict(model=model, max_tokens=max_tokens, system=system,
+                      temperature=config.LLM_TEMPERATURE,
+                      messages=[{"role": "user", "content": content}])
+        msg = ratelimit.with_retry(lambda: _client.messages.create(**kwargs),
+                                   provider=provider)
+        return "".join(getattr(b, "text", "") for b in msg.content
+                       if getattr(b, "type", "") == "text")
+
+    # openai-compatible (openai / azure / gemini / qwen): image via image_url data URI
+    content = [{"type": "text", "text": user},
+               {"type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{image_b64}"}}]
+    kwargs = dict(model=model, max_tokens=max_tokens, temperature=config.LLM_TEMPERATURE,
+                  messages=[{"role": "system", "content": system},
+                            {"role": "user", "content": content}])
+    if want_json:
+        kwargs["response_format"] = {"type": "json_object"}
+    resp = ratelimit.with_retry(
+        lambda: _client.chat.completions.create(**kwargs), provider=provider)
+    return resp.choices[0].message.content or ""

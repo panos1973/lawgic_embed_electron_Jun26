@@ -58,7 +58,18 @@ function logLine({ stage, doc, msg, cls, ts }) {
 // ---- ingest ----
 $('chooseBtn').addEventListener('click', async () => {
   const f = await window.api.selectFolder();
-  if (f) { folder = f; $('folderPath').textContent = f; $('startBtn').disabled = false; }
+  if (f) {
+    folder = f; $('folderPath').textContent = f;
+    $('startBtn').disabled = false; $('enrichBtn').disabled = false;
+  }
+});
+
+$('enrichBtn').addEventListener('click', () => {
+  if (!folder) return;
+  $('log').innerHTML = '';
+  $('startBtn').disabled = true; $('enrichBtn').disabled = true; $('cancelBtn').disabled = false;
+  setPill('busy', 'enriching');
+  window.api.enrich(folder);   // backfill summaries/keywords/title; vectors untouched
 });
 
 $('startBtn').addEventListener('click', () => {
@@ -128,6 +139,7 @@ window.api.onPipelineEvent((o) => {
 
 window.api.onPipelineDone(({ code, error }) => {
   $('cancelBtn').disabled = true;
+  $('enrichBtn').disabled = !folder;
   if (paused) {
     // stopped on a credential/endpoint error — offer Resume, not a fresh Start
     $('resumeBtn').hidden = false; $('startBtn').disabled = true;
@@ -177,6 +189,7 @@ async function loadSettings() {
   $('llmChoice').value = `${s.llmProvider || 'anthropic'}|${s.llmModel || 'claude-haiku-4-5'}`;
   $('llmThinking').checked = !!s.llmThinking;
   $('amendLlm').checked = (s.amendExtractor === 'llm');
+  $('tableVision').checked = !!s.tableVision;
   $('encNote').textContent = s.encryptionAvailable
     ? '· keys encrypted at rest' : '· plaintext (no OS keychain)';
 }
@@ -189,6 +202,7 @@ $('saveSettings').addEventListener('click', async () => {
   obj.llmModel = model;
   obj.llmThinking = $('llmThinking').checked;
   obj.amendExtractor = $('amendLlm').checked ? 'llm' : 'deterministic';
+  obj.tableVision = $('tableVision').checked;
   await window.api.saveSettings(obj);
   $('savedNote').textContent = 'saved ✓';
   setTimeout(() => ($('savedNote').textContent = ''), 2000);
@@ -203,6 +217,7 @@ $('testCreds').addEventListener('click', async () => {
   obj.llmProvider = provider; obj.llmModel = model;
   obj.llmThinking = $('llmThinking').checked;
   obj.amendExtractor = $('amendLlm').checked ? 'llm' : 'deterministic';
+  obj.tableVision = $('tableVision').checked;
   await window.api.saveSettings(obj);
 
   $('diagNote').textContent = 'checking…';

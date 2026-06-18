@@ -72,6 +72,7 @@ function childEnv(s) {
     LLM_PROVIDER: s.llmProvider, LLM_MODEL: s.llmModel,
     LLM_THINKING: s.llmThinking ? 'on' : 'off',
     AMEND_EXTRACTOR: s.amendExtractor || 'deterministic',
+    TABLE_VISION: s.tableVision ? 'on' : 'off',
     CONCURRENCY: s.concurrency, VOYAGE_RPM: s.voyageRpm, LLM_RPM: s.llmRpm,
     STATE_DB: s.stateDb, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8',
     APP_VERSION: app.getVersion(),
@@ -154,6 +155,7 @@ function registerIpc(win) {
     return r.canceled ? null : r.filePaths[0];
   });
   ipcMain.handle('pipeline:start', (_e, folder) => { runStreaming(win, ['ingest', folder]); return true; });
+  ipcMain.handle('pipeline:enrich', (_e, folder) => { runStreaming(win, ['enrich', folder]); return true; });
   ipcMain.handle('pipeline:retry', () => { runStreaming(win, ['retry']); return true; });
   ipcMain.on('pipeline:cancel', () => { if (activeChild) activeChild.kill(); });
   ipcMain.handle('pipeline:status', () => runOneShot(['status'], 'status'));
