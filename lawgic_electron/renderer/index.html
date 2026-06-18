@@ -171,6 +171,13 @@
         <label>Core directory (lawgic_pipeline)<input id="coreDir" /></label>
         <label>State DB path<input id="stateDb" /></label>
         <label>Jurisdiction (tenant)<input id="jurisdiction" placeholder="gr" /></label>
+        <label>Worker concurrency — parallel documents<input id="concurrency" placeholder="4" /></label>
+        <label>Voyage rate cap — requests/min (blank = default)<input id="voyageRpm" placeholder="e.g. 240" /></label>
+        <label>LLM rate cap — requests/min (blank = default)<input id="llmRpm" placeholder="e.g. 240" /></label>
+        <p class="hint">Rate caps are <b>per app instance</b> and are not shared. Running N
+          instances in parallel multiplies the load on your one API quota — set each to
+          roughly (your account limit ÷ N). Each instance also needs its own State DB path
+          and its own input folder.</p>
       </div>
       <div class="panel">
         <div class="panel-title">Summarization &amp; metadata model</div>

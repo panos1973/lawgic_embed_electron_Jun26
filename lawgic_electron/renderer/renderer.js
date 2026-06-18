@@ -165,7 +165,8 @@ async function loadReview() {
 }
 
 // ---- settings ----
-const FIELDS = ['pythonPath', 'coreDir', 'stateDb', 'jurisdiction', 'weaviateUrl',
+const FIELDS = ['pythonPath', 'coreDir', 'stateDb', 'jurisdiction', 'concurrency',
+  'voyageRpm', 'llmRpm', 'weaviateUrl',
   'weaviateApiKey', 'voyageApiKey', 'diEndpoint', 'diKey', 'anthropicKey',
   'deepseekKey', 'geminiKey', 'azureOpenaiEndpoint', 'azureOpenaiKey',
   'azureOpenaiApiVersion'];

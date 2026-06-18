@@ -72,6 +72,7 @@ function childEnv(s) {
     LLM_PROVIDER: s.llmProvider, LLM_MODEL: s.llmModel,
     LLM_THINKING: s.llmThinking ? 'on' : 'off',
     AMEND_EXTRACTOR: s.amendExtractor || 'deterministic',
+    CONCURRENCY: s.concurrency, VOYAGE_RPM: s.voyageRpm, LLM_RPM: s.llmRpm,
     STATE_DB: s.stateDb, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8',
     APP_VERSION: app.getVersion(),
   });

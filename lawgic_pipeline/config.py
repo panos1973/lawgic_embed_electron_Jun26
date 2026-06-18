@@ -91,7 +91,32 @@ GRAPH_DELEGATION = "Jun2026Delegation"
 STATE_DB = os.environ.get("STATE_DB", "lawgic_state.db")
 
 # --- Pipeline tuning ---
-CONCURRENCY = int(os.environ.get("CONCURRENCY", "4"))
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _float_env(name: str):
+    """Optional float from env: None when unset/blank/invalid (keep code default)."""
+    v = os.environ.get(name, "")
+    try:
+        return float(v) if v not in ("", None) else None
+    except (TypeError, ValueError):
+        return None
+
+
+# Per-document worker pool size (parallel laws within ONE app instance).
+CONCURRENCY = _int_env("CONCURRENCY", 4)
+
+# Optional per-process API request-rate caps (requests/minute). Unset -> the
+# conservative built-in defaults in ratelimit.py. The limiter is per-process and
+# does NOT coordinate across instances, so when running several app instances in
+# parallel against ONE shared API quota, set each instance to about
+# (account_limit / number_of_instances) so the COMBINED rate stays under the quota.
+VOYAGE_RPM = _float_env("VOYAGE_RPM")     # voyage-context-3 embedding requests/min
+LLM_RPM = _float_env("LLM_RPM")           # enrichment LLM (LLM_PROVIDER) requests/min
 
 
 def require(*names: str) -> None:
