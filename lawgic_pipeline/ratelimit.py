@@ -59,6 +59,24 @@ def set_limits(provider: str, rate: float, capacity: float) -> None:
         _BUCKETS[provider] = TokenBucket(rate, capacity)
 
 
+def configure(*, voyage_rpm=None, llm_provider=None, llm_rpm=None) -> None:
+    """Override per-provider request rates from RPM settings (called once at start).
+
+    Unset / zero values keep the built-in defaults. RPM -> permits/sec; burst is
+    ~2s of headroom. Buckets are PER PROCESS, so when N app instances run in
+    parallel against ONE shared API quota, set each instance to about
+    account_limit / N so the combined request rate stays under the quota.
+    """
+    if voyage_rpm and voyage_rpm > 0:
+        rate = float(voyage_rpm) / 60.0
+        set_limits("voyage", rate, max(rate * 2.0, 1.0))
+        log.info("voyage rate limit set to %.0f req/min (%.2f/s)", voyage_rpm, rate)
+    if llm_rpm and llm_rpm > 0 and llm_provider:
+        rate = float(llm_rpm) / 60.0
+        set_limits(llm_provider, rate, max(rate * 2.0, 1.0))
+        log.info("%s rate limit set to %.0f req/min (%.2f/s)", llm_provider, llm_rpm, rate)
+
+
 def _bucket(provider: str) -> TokenBucket:
     with _BUCKETS_LOCK:
         b = _BUCKETS.get(provider)

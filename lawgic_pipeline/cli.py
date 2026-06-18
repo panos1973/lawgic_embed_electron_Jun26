@@ -471,6 +471,9 @@ def main():
     args = ap.parse_args(argv)
     import logsetup
     logsetup.init()                            # durable rotating file log
+    import ratelimit                           # honor optional per-process RPM caps
+    ratelimit.configure(voyage_rpm=config.VOYAGE_RPM,
+                        llm_provider=config.LLM_PROVIDER, llm_rpm=config.LLM_RPM)
     {"ingest": lambda: cmd_ingest(args.folder), "status": cmd_status,
      "diag": cmd_diag,
      "review": cmd_review, "retry": cmd_retry,
