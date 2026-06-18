@@ -164,6 +164,10 @@ function registerIpc(win) {
   ipcMain.handle('laws:list', () => runOneShot(['laws'], 'laws'));
   ipcMain.handle('law:inspect', (_e, { collection, law }) =>
     runOneShot(['inspect', '--collection', collection, '--law', law], 'inspect'));
+  ipcMain.handle('timeline:consolidate', () => runOneShot(['consolidate'], 'consolidate'));
+  ipcMain.handle('graph:status', () => runOneShot(['graph-status'], 'graph-status'));
+  ipcMain.handle('provision:history', (_e, { law, article }) =>
+    runOneShot(['history', '--law', law, '--article', article], 'history'));
   ipcMain.handle('settings:get', () => {
     const s = loadSettings();
     return Object.assign(s, { encryptionAvailable: safeStorage.isEncryptionAvailable() });

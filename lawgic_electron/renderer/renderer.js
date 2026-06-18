@@ -15,6 +15,7 @@ document.querySelectorAll('.tab').forEach((t) => {
     $(t.dataset.tab).classList.add('active');
     if (t.dataset.tab === 'review') loadReview();
     if (t.dataset.tab === 'browse') loadLaws();
+    if (t.dataset.tab === 'timeline') loadLaws();   // populate the shared law datalist
     if (t.dataset.tab === 'settings') { loadSettings(); loadCollections(); }
   });
 });
@@ -369,6 +370,92 @@ $('refreshLaws').addEventListener('click', loadLaws);
 $('loadChunks').addEventListener('click', loadChunks);
 $('copyJson').addEventListener('click', () => lastInspect && copyText(JSON.stringify(lastInspect.objects, null, 2), 'JSON'));
 $('copyMd').addEventListener('click', () => lastInspect && copyText(toMarkdown(lastInspect), 'Markdown'));
+
+// ---- timeline / chain QA (consolidate · graph-status · history) ----
+$('runConsolidate').addEventListener('click', async () => {
+  const btn = $('runConsolidate');
+  btn.disabled = true;
+  $('consolidateNote').textContent = 'rebuilding… (re-embeds amended text; may take a while)';
+  const r = await window.api.consolidate();
+  btn.disabled = false;
+  $('consolidateNote').textContent = '';
+  $('consolidateOut').hidden = false;
+  if (!r || r.error) {
+    $('consolidateOut').textContent = 'error: ' + ((r && r.error) || 'failed');
+    return;
+  }
+  $('consolidateOut').textContent =
+    `articles touched:  ${r.articles ?? 0}\n` +
+    `versions written:  ${r.versions_written ?? 0}\n` +
+    `pending (target law not ingested yet):  ${r.pending ?? 0}`;
+});
+
+$('runGraphStatus').addEventListener('click', async () => {
+  $('graphNote').textContent = 'checking…';
+  const r = await window.api.graphStatus();
+  $('graphNote').textContent = '';
+  $('graphOut').hidden = false;
+  if (!r || r.error) {
+    $('graphOut').textContent = 'error: ' + ((r && r.error) || 'failed');
+    return;
+  }
+  const dangling = r.dangling_targets || [];
+  const unresolved = r.unresolved_targets || [];
+  const lines = [
+    `amendment edges:               ${r.amendments ?? 0}`,
+    `  resolved (target present):   ${r.target_law_present ?? 0}`,
+    `  dangling (target absent):    ${r.target_law_missing ?? 0}`,
+    `  unresolved (no canonical):   ${r.unresolved ?? 0}`,
+    `  undated:                     ${r.undated ?? 0}`,
+  ];
+  if (dangling.length) lines.push('', 'Dangling targets (target law not ingested yet):',
+    ...dangling.map((t) => '  ' + t));
+  if (unresolved.length) lines.push('', 'Unresolved references:',
+    ...unresolved.map((t) => '  ' + t));
+  $('graphOut').textContent = lines.join('\n');
+});
+
+$('runHistory').addEventListener('click', async () => {
+  const law = $('historyLaw').value.trim();
+  const article = $('historyArticle').value.trim();
+  if (!law || !article) {
+    $('historyNote').textContent = 'enter law + article';
+    setTimeout(() => ($('historyNote').textContent = ''), 2500);
+    return;
+  }
+  $('historyOut').innerHTML = '<div class="empty">loading…</div>';
+  const r = await window.api.provisionHistory(law, article);
+  if (!r || r.error) {
+    $('historyOut').innerHTML = `<div class="empty">error: ${esc((r && r.error) || 'failed')}</div>`;
+    return;
+  }
+  renderHistory(r);
+});
+
+function renderHistory(h) {
+  const head = `<div class="browse-head">${esc(h.law_number)} άρθρο ${esc(h.article_number)} · ` +
+    `<b>${h.version_count}</b> version(s) · <b>${h.edit_count}</b> edge(s)` +
+    (h.unresolved_edits ? ` · ${h.unresolved_edits} unresolved` : '') + `</div>`;
+  const pending = (h.edit_count && !h.target_present)
+    ? `<p class="hint">No text versions yet — the target/base law isn't ingested; the edges below resolve once it is.</p>` : '';
+  const versions = (h.versions || []).map((v) =>
+    `<div class="chunk-card"><div class="chunk-id">v${v.version ?? '?'} · ` +
+    `${esc(v.valid_from || '?')} → ${esc(v.valid_to || 'current')}${v.is_current ? ' · current' : ''}</div>` +
+    `<div class="chunk-meta"><span class="kv"><i>status</i>${esc(v.legal_force_status || '')}</span>` +
+    `<span class="kv"><i>chars</i>${v.chars ?? 0}</span></div>` +
+    (v.text_preview ? `<pre class="chunk-text">${esc(v.text_preview)}</pre>` : '') + `</div>`).join('');
+  const edits = (h.edits || []).map((e) =>
+    `<div class="chunk-card"><div class="chunk-id">${esc(e.effective_date || '????-??-??')} · ` +
+    `${esc(e.action || '?')}${e.resolved === false ? ' · UNRESOLVED' : ''}</div>` +
+    `<div class="chunk-meta"><span class="kv"><i>by</i>ν.${esc(e.source_law_number || '?')}` +
+    `${e.source_article_number ? (' άρθρο ' + esc(e.source_article_number)) : ''}</span>` +
+    `<span class="kv"><i>scope</i>${esc(e.scope || '')}</span></div></div>`).join('');
+  $('historyOut').innerHTML = head + pending +
+    `<div class="browse-head">Text timeline</div>` +
+    (versions || '<div class="empty">— no versions —</div>') +
+    `<div class="browse-head">Amendment edges (chronological)</div>` +
+    (edits || '<div class="empty">— no edges —</div>');
+}
 
 // ---- app version ----
 async function showVersion() {
