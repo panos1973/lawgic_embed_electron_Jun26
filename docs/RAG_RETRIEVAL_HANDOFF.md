@@ -17,13 +17,41 @@
 
 ## 1. Connection & embedding (critical setup)
 
-- **Weaviate:** multi-tenant. **Every query MUST set tenant `gr`** (`.with_tenant("gr")`). Omitting the tenant returns nothing.
-- **Vectors are "bring your own" (voyage), not a Weaviate vectorizer module.** Weaviate will **not** auto-embed your query. At query time you must:
-  1. Embed the query text with **voyage-context-3**, `input_type="query"`, `output_dimension=1024`.
-  2. Pass that vector to Weaviate via `near_vector` (or `hybrid(..., vector=<v>)`).
-- **Embed model:** `voyage-context-3`, **1024 dims**. **Query embedding:** `voyageai` `contextualized_embed(inputs=[[query]], model="voyage-context-3", input_type="query", output_dimension=1024)` → `result.results[0].embeddings[0]`.
-- **Reranker (optional, recommended):** `rerank-2.5` (voyage) over the candidate chunk texts to sharpen top-k.
-- **gRPC note:** if your environment blocks gRPC, use the **REST GraphQL** endpoint (`POST {WEAVIATE_URL}/v1/graphql`) — every query below is expressible in GraphQL `Get`/`Aggregate` with `where`/`nearVector`/`sort`.
+> **Your RAG app is TypeScript** → query Weaviate **directly** with the Weaviate TS client (`weaviate-client`). There is **no Python intermediary** — the query logic below is small and lives in your TS app. The only external call is to **voyage** for the query vector (REST).
+
+- **Weaviate:** multi-tenant. **Every query MUST be scoped to tenant `gr`** (`collection.withTenant('gr')`). Omitting the tenant returns nothing.
+- **Vectors are "bring your own" (voyage), not a Weaviate vectorizer module.** Weaviate will **not** auto-embed your query. At query time you must compute the query vector yourself with **voyage-context-3** and pass it via `nearVector`/`hybrid({ vector })`.
+- **Embed model:** `voyage-context-3`, **1024 dims**. **Query embedding** = voyage *contextualized* embeddings, `input_type: "query"`, `output_dimension: 1024`. There's no official voyage TS SDK — call the REST API:
+
+```ts
+// query vector via voyage (verify exact endpoint/response shape in voyage's
+// "contextualized embeddings" API docs; the durable facts are model + input_type + 1024-d)
+async function queryVector(q: string): Promise<number[]> {
+  const r = await fetch("https://api.voyageai.com/v1/contextualizedembeddings", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.VOYAGE_API_KEY}`,
+               "Content-Type": "application/json" },
+    body: JSON.stringify({
+      inputs: [[q]], model: "voyage-context-3",
+      input_type: "query", output_dimension: 1024,
+    }),
+  });
+  const j = await r.json();
+  return j.results[0].embeddings[0];   // single query → single vector (map per the API response)
+}
+```
+
+- **Reranker (optional, recommended):** voyage `rerank-2.5` over the candidate `chunk_text`s to sharpen top-k (also REST).
+- **Weaviate TS client connect:**
+
+```ts
+import weaviate from "weaviate-client";
+const client = await weaviate.connectToWeaviateCloud(process.env.WEAVIATE_URL!, {
+  authCredentials: new weaviate.ApiKey(process.env.WEAVIATE_API_KEY!),
+});
+const flat = client.collections.get("Jun2026GRLegaDocs").withTenant("gr");
+```
+
 
 ---
 
@@ -80,34 +108,39 @@ So: **"current law"** = filter `is_current = true`. **"law as of date D"** = fil
 
 ## 5. The four query patterns to implement
 
-> Examples use Weaviate Python client v4 shapes for legibility. Translate to your stack; the **filters + sorts + fields** are what matter. Always `.with_tenant("gr")`.
+> Examples use the **Weaviate TypeScript client** (`weaviate-client` v3). `import weaviate, { Filters } from "weaviate-client";`. The **filters + sorts + fields** are the durable part — confirm exact method names against your installed client version. Every collection handle is `.withTenant("gr")` (see §1).
 
 ### A. Semantic subject search — *"latest developments in criminal law about X"* (the entry point)
 Hybrid (vector + BM25) over **flat**, filtered by subject, biased to recent + current.
-```python
-qv = voyage_query_vector(user_question)            # voyage-context-3, input_type="query", 1024-d
-flat.query.hybrid(
-    query=user_question,                            # BM25 leg (Greek/English)
-    vector=qv,                                      # vector leg (you supply it)
-    filters=(Filter.by_property("legal_domain").contains_any(["criminal"])
-             & Filter.by_property("is_current").equal(True)),
-    limit=40,
-)
-# then: rerank-2.5 over the returned chunk_text, and/or sort by effective_date desc for "latest"
+```ts
+const qv = await queryVector(userQuestion);                 // §1: voyage, 1024-d, input_type=query
+const res = await flat.query.hybrid(userQuestion, {         // BM25 (Greek/English) + vector legs
+  vector: qv,
+  filters: Filters.and(
+    flat.filter.byProperty("legal_domain").containsAny(["criminal"]),
+    flat.filter.byProperty("is_current").equal(true),
+  ),
+  limit: 40,
+  returnProperties: ["canonical_id", "article_number", "chunk_text",
+                     "effective_date", "document_title", "law_number"],
+});
+// then: voyage rerank-2.5 over res.objects[].properties.chunk_text, and/or
+// sort by effective_date desc for "latest developments"
 ```
 - Subject by **controlled label** (`legal_domain`) — see the vocabulary in §6 — or by **`domain_dkn`** volume (e.g. `"ΠΟΙΝΙΚΗ ΝΟΜΟΘΕΣΙΑ"`).
 - For "latest developments" specifically, sort candidates by `effective_date` desc (or `valid_from` desc).
 
 ### B. All changes to a whole code/law — *"every amendment to the Criminal Code, newest first"*
 Pure scalar query on **`Jun2026Amendment`** (no vector):
-```python
-amendment.query.fetch_objects(
-    filters=Filter.by_property("target_law_number").equal("4619/2019"),   # the ΠΚ
-    sort=Sort.by_property("effective_date", ascending=False),             # newest first
-    limit=500,
-)
-# each row: source_law_number/source_article_number (who changed it), action, target_article_number,
-# target_paragraph, new_text, effective_date, resolved
+```ts
+const amend = client.collections.get("Jun2026Amendment").withTenant("gr");
+const res = await amend.query.fetchObjects({
+  filters: amend.filter.byProperty("target_law_number").equal("4619/2019"),  // the ΠΚ
+  sort: amend.sort.byProperty("effective_date", false),                      // false = newest first
+  limit: 500,
+});
+// each row: source_law_number / source_article_number (who changed it), action,
+// target_article_number, target_paragraph, new_text, effective_date, resolved
 ```
 
 ### C. Full history of one provision — *"how did article 5 change over time"* (`cli history` equivalent)
@@ -115,17 +148,42 @@ Two reads, merged:
 1. **The edits** — `Jun2026Amendment` where `target_law_number == "4619/2019"` **and** `target_article_number == "5"`, sorted `effective_date` asc → the ordered list of changes (and any `resolved=false` ⇒ an older amending law you haven't ingested yet).
 2. **The text timeline** — `Jun2026LawArticle` (or flat) where `document_law_number == "4619/2019"` and `article_number == "5"`, all versions, sorted `valid_from` asc → the wording at each stage (`valid_from`/`valid_to`/`is_current`/`legal_force_status`).
 
-Present them zipped: *"v1 (enacted 2019…) → amended by ν.X art.Y on DATE → v2 text … → repealed by ν.Z on DATE."*
+```ts
+// 1) the edits to article 5 (article-level: filter law+article, NOT exact canonical_id)
+const edits = await amend.query.fetchObjects({
+  filters: Filters.and(
+    amend.filter.byProperty("target_law_number").equal("4619/2019"),
+    amend.filter.byProperty("target_article_number").equal("5"),
+  ),
+  sort: amend.sort.byProperty("effective_date", true),     // ascending = chronological
+});
+// 2) the text timeline of article 5
+const versions = await article.query.fetchObjects({
+  filters: Filters.and(
+    article.filter.byProperty("document_law_number").equal("4619/2019"),
+    article.filter.byProperty("article_number").equal("5"),
+  ),
+  sort: article.sort.byProperty("valid_from", true),
+});
+```
+
+Present them zipped: *"v1 (enacted 2019…) → amended by ν.X art.Y on DATE → v2 text … → repealed by ν.Z on DATE."* Any `edit.properties.resolved === false` ⇒ an older amending law not yet ingested (flag it as a pending link, don't drop it).
 
 ### D. Point-in-time text — *"what did article 5 say on 2021-06-01"*
-```python
-article.query.fetch_objects(
-    filters=(Filter.by_property("document_law_number").equal("4619/2019")
-             & Filter.by_property("article_number").equal("5")
-             & Filter.by_property("valid_from").less_or_equal("2021-06-01T00:00:00Z")
-             & (Filter.by_property("valid_to").is_none(True)
-                | Filter.by_property("valid_to").greater_than("2021-06-01T00:00:00Z"))),
-)
+```ts
+const article = client.collections.get("Jun2026LawArticle").withTenant("gr");
+const asOf = new Date("2021-06-01T00:00:00Z");
+const v = await article.query.fetchObjects({
+  filters: Filters.and(
+    article.filter.byProperty("document_law_number").equal("4619/2019"),
+    article.filter.byProperty("article_number").equal("5"),
+    article.filter.byProperty("valid_from").lessOrEqual(asOf),
+    Filters.or(
+      article.filter.byProperty("valid_to").isNull(true),       // null = still current
+      article.filter.byProperty("valid_to").greaterThan(asOf),
+    ),
+  ),
+});
 ```
 
 ---
@@ -138,7 +196,7 @@ criminal, criminal_procedure, customs, data_protection, defense, digital,
 education, energy, environmental, eu_law, health, immigration, insolvency,
 labor, public_procurement, social_security, tax, transport
 ```
-`domain_dkn` carries the Ραπτάρχης volume names (e.g. `ΠΟΙΝΙΚΗ ΝΟΜΟΘΕΣΙΑ`, `ΠΟΙΝΙΚΗ ΔΙΚΟΝΟΜΙΑ`). Both are **multi-label** (a provision can carry several). Filter with `contains_any`.
+`domain_dkn` carries the Ραπτάρχης volume names (e.g. `ΠΟΙΝΙΚΗ ΝΟΜΟΘΕΣΙΑ`, `ΠΟΙΝΙΚΗ ΔΙΚΟΝΟΜΙΑ`). Both are **multi-label** (a provision can carry several). Filter with `.containsAny([...])`.
 
 ---
 
