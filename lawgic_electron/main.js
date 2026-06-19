@@ -23,6 +23,8 @@ function defaults() {
       : path.join(__dirname, '..', 'lawgic_pipeline', 'dist', 'lawgic-core'),
     weaviateUrl: 'https://dxyeak9tnm4gp8raeh1g.c0.europe-west3.gcp.weaviate.cloud',
     weaviateApiKey: '', voyageApiKey: '', diEndpoint: '', diKey: '',
+    // Azure DI prebuilt model (NOT an LLM): prebuilt-layout (tables+OCR) | prebuilt-read (OCR only)
+    azureDiModel: 'prebuilt-layout',
     anthropicKey: '', deepseekKey: '', geminiKey: '', jurisdiction: 'gr',
     // Azure OpenAI (gpt-4.1 / gpt-4.1-mini): endpoint is pre-filled (not a secret),
     // key is entered by the user (encrypted at rest), model name == deployment name.
@@ -67,6 +69,7 @@ function childEnv(s) {
   return Object.assign({}, process.env, {
     WEAVIATE_URL: s.weaviateUrl, WEAVIATE_API_KEY: s.weaviateApiKey,
     VOYAGE_API_KEY: s.voyageApiKey, DI_ENDPOINT: s.diEndpoint, DI_KEY: s.diKey,
+    AZURE_DI_MODEL: s.azureDiModel,
     ANTHROPIC_API_KEY: s.anthropicKey, JURISDICTION: s.jurisdiction,
     DEEPSEEK_API_KEY: s.deepseekKey, GEMINI_API_KEY: s.geminiKey,
     AZURE_OPENAI_ENDPOINT: s.azureOpenaiEndpoint, AZURE_OPENAI_KEY: s.azureOpenaiKey,

@@ -22,6 +22,10 @@ RERANK_MODEL = "rerank-2.5"
 # --- Azure Document Intelligence (table pages) ---
 AZURE_DI_ENDPOINT = os.environ.get("DI_ENDPOINT", "")
 AZURE_DI_KEY = os.environ.get("DI_KEY", "")
+# Which DI prebuilt model to run (NOT an LLM — Azure's own document models):
+#   prebuilt-layout — text + TABLES + structure + OCR (markdown). Best for FEK tables.
+#   prebuilt-read   — OCR text + reading order only (cheaper, no table structure).
+AZURE_DI_MODEL = os.environ.get("AZURE_DI_MODEL", "prebuilt-layout")
 
 # --- LLM for enrichment (summary / keywords / EUROVOC / ΔΚΝ) ---
 # Provider-agnostic. Pick via LLM_PROVIDER + LLM_MODEL (or the Electron Settings UI).

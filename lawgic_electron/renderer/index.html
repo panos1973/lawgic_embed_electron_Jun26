@@ -216,6 +216,12 @@
         <label>Voyage API key<input id="voyageApiKey" type="password" /></label>
         <label>Azure DI endpoint<input id="diEndpoint" /></label>
         <label>Azure DI key<input id="diKey" type="password" /></label>
+        <label>Azure DI model
+          <select id="azureDiModel">
+            <option value="prebuilt-layout">prebuilt-layout — text + tables + structure + OCR (best for FEK tables)</option>
+            <option value="prebuilt-read">prebuilt-read — OCR text only, no table structure (cheaper)</option>
+          </select>
+        </label>
         <label>Anthropic API key<input id="anthropicKey" type="password" /></label>
         <label>DeepSeek API key<input id="deepseekKey" type="password" /></label>
         <label>Gemini API key<input id="geminiKey" type="password" /></label>
