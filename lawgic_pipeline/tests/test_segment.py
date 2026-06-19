@@ -51,6 +51,32 @@ def test_drops_bare_annex_divider_articles():
     assert all(p.text_in_force.strip() != "Παραρτήματα" for p in law.provisions)
 
 
+def test_repeated_annex_label_keeps_unique_ids():
+    """Two ΠΑΡΑΡΤΗΜΑ blocks sharing a label (or blank) must get DISTINCT canonical_ids
+    — else they share a UUID and silently overwrite each other at load (the Β΄3283/2025
+    bug: 5 annex sub-chunks lost). Covers both single annexes and the sub-chunk path."""
+    big = "Κείμενο του παραρτήματος που είναι αρκετά μεγάλο. " * 900   # > _ENACTED_BODY_MAX
+    from pipeline.segment import _ENACTED_BODY_MAX
+    assert len(big) > _ENACTED_BODY_MAX
+    law = Law(instrument_id="Β΄3283/2025", instrument_key="x", instrument_type=TYPE_NOMOS)
+    # same label "Α'" three times: one small + two huge (sub-chunked) -> would collide
+    text = (f"ΠΑΡΑΡΤΗΜΑ Α'\nΜικρό παράρτημα.\n\n"
+            f"ΠΑΡΑΡΤΗΜΑ Α'\n{big}\n\n"
+            f"ΠΑΡΑΡΤΗΜΑ Α'\n{big}\n")
+    law = segment(text, law)
+    cids = [p.canonical_id for p in law.provisions]
+    assert len(cids) == len(set(cids)), "annex canonical_ids must be unique (no overwrite)"
+    assert len(law.provisions) >= 3                      # nothing collapsed away
+
+
+def test_two_unlabeled_annexes_do_not_collide():
+    law = Law(instrument_id="Β΄1/2025", instrument_key="x", instrument_type=TYPE_NOMOS)
+    law = segment("ΠΑΡΑΡΤΗΜΑ\nΠρώτο.\n\nΠΑΡΑΡΤΗΜΑ\nΔεύτερο.\n", law)
+    annex = [p for p in law.provisions if p.chunk_type == "annex"]
+    assert len(annex) == 2
+    assert annex[0].canonical_id != annex[1].canonical_id
+
+
 def test_short_no_article_document_stays_single_full_chunk():
     # backward-compatible: a short decision (no Άρθρα) is still ONE '#full' chunk
     law = Law(instrument_id="Β΄2/2025", instrument_key="x", instrument_type=TYPE_NOMOS)

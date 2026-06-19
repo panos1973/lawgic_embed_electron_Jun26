@@ -255,6 +255,22 @@ def _structural_path(state: dict) -> list[str]:
 _ENACTED_BODY_MAX = 30_000
 
 
+def _unique_loc(loc: str, seen: set) -> str:
+    """A provision's canonical-id location must be unique within a law. An empty or
+    repeated ΠΑΡΑΡΤΗΜΑ label (e.g. a header that recurs across pages, or several
+    blocks all labelled «Α'») would otherwise yield the same loc -> same UUID ->
+    sibling annex chunks silently overwrite each other (content loss). Disambiguate a
+    repeat with a counter, so every annex (and its sub-chunks) keeps a distinct id."""
+    if loc not in seen:
+        seen.add(loc)
+        return loc
+    k = 2
+    while f"{loc}.{k}" in seen:
+        k += 1
+    seen.add(f"{loc}.{k}")
+    return f"{loc}.{k}"
+
+
 def _annex_subchunks(law: Law, state: dict, base_loc: str, body: str) -> None:
     """Emit `body` as one or more ANNEX provisions, sub-chunked under base_loc."""
     secs = _split_document_body(body)
@@ -292,6 +308,7 @@ def segment(text: str, law: Law) -> Law:
 
     state = {lvl: "" for lvl in _ORDER}        # current structural tokens
     seen_articles: set[str] = set()            # de-dup repeated Άρθρο headers
+    seen_locs: set[str] = set()                # keep annex canonical-id locs unique
 
     for idx, (start, end, kind, m) in enumerate(anchors):
         nxt = anchors[idx + 1][0] if idx + 1 < len(anchors) else len(text)
@@ -307,7 +324,9 @@ def segment(text: str, law: Law) -> Law:
 
         if kind == "annex":
             token = (m.group(1) or "").strip()
-            loc = f"παραρτ.{token}" if token else "παραρτ"
+            # unique within the law: a repeated/blank ΠΑΡΑΡΤΗΜΑ label must NOT collide
+            # to one UUID and overwrite sibling annex chunks (content loss).
+            loc = _unique_loc(f"παραρτ.{token}" if token else "παραρτ", seen_locs)
             if len(body) > _ENACTED_BODY_MAX:      # huge annex -> retrievable sub-chunks
                 _annex_subchunks(law, state, loc, body)
                 continue
