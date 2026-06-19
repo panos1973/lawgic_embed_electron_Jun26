@@ -42,7 +42,9 @@ _ANCHORS = [
     # Roman numerals (international-treaty articles): "Άρθρο XII" — post-glyph
     # normalization these mix Greek (Ι Χ Μ) and Latin (V L C D) homoglyphs.
     ("article", re.compile(r"(?m)^\s*Άρθρο\s+([ΙΧΜIVXLCDM]{2,7})\.?\s*$")),
-    ("annex",   re.compile(r"(?m)^\s*ΠΑΡΑΡΤΗΜΑ\s*" + _LABEL + r"?\s*$")),
+    # A label must be SEPARATED by whitespace, else the plural header "ΠΑΡΑΡΤΗΜΑΤΑ"
+    # is mis-read as ΠΑΡΑΡΤΗΜΑ + label "ΤΑ". "ΠΑΡΑΡΤΗΜΑ" alone (no label) still matches.
+    ("annex",   re.compile(r"(?m)^\s*ΠΑΡΑΡΤΗΜΑ(?:\s+" + _LABEL + r")?\s*$")),
 ]
 
 # Hierarchy nesting order (shallow -> deep) and the keyword shown in the path.
@@ -254,6 +256,14 @@ def _structural_path(state: dict) -> list[str]:
 # untouched (it only fires on a body that would itself overflow the embedder).
 _ENACTED_BODY_MAX = 30_000
 
+# An annex larger than this is split into retrieval-sized sub-chunks (paragraph-aware
+# via _split_document_body, which keeps markdown tables atomic) instead of one giant
+# diluted vector. Far smaller than the treaty threshold above: annexes are reference
+# material (forms, lists, schedules) where finer granularity helps retrieval, and they
+# are not amendment targets, so sub-chunking carries no graph risk. Articles stay whole
+# (they ARE amendment targets — sub-chunking them would break amendment resolution).
+_ANNEX_CHUNK_MAX = 8_000
+
 
 def _unique_loc(loc: str, seen: set) -> str:
     """A provision's canonical-id location must be unique within a law. An empty or
@@ -327,7 +337,7 @@ def segment(text: str, law: Law) -> Law:
             # unique within the law: a repeated/blank ΠΑΡΑΡΤΗΜΑ label must NOT collide
             # to one UUID and overwrite sibling annex chunks (content loss).
             loc = _unique_loc(f"παραρτ.{token}" if token else "παραρτ", seen_locs)
-            if len(body) > _ENACTED_BODY_MAX:      # huge annex -> retrievable sub-chunks
+            if len(body) > _ANNEX_CHUNK_MAX:       # large annex -> retrievable sub-chunks
                 _annex_subchunks(law, state, loc, body)
                 continue
             cid = f"{law.instrument_id}#{loc}"

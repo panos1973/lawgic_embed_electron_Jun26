@@ -77,6 +77,34 @@ def test_two_unlabeled_annexes_do_not_collide():
     assert annex[0].canonical_id != annex[1].canonical_id
 
 
+def test_large_annex_is_subchunked_for_retrieval():
+    """A large annex must split into retrieval-sized pieces (not one diluted vector),
+    paragraph-aware. Articles stay whole — only the annex path sub-chunks here."""
+    from pipeline.segment import _ANNEX_CHUNK_MAX
+    body = "Παράγραφος αναφοράς του παραρτήματος.\n\n" * 600   # > _ANNEX_CHUNK_MAX
+    assert len(body) > _ANNEX_CHUNK_MAX
+    law = Law(instrument_id="Β΄9/2025", instrument_key="x", instrument_type=TYPE_NOMOS)
+    law = segment(f"Άρθρο 1\nΣύντομο άρθρο.\n\nΠΑΡΑΡΤΗΜΑ Α'\n{body}\n", law)
+    annex = [p for p in law.provisions if p.chunk_type == "annex"]
+    assert len(annex) > 1                                  # the big annex was split
+    assert all(len(p.text_in_force) <= 4000 for p in annex)  # each is retrieval-sized
+    assert len({p.canonical_id for p in annex}) == len(annex)  # unique ids
+    # the single short article is untouched (one whole chunk)
+    arts = [p for p in law.provisions if p.chunk_type == "article"]
+    assert len(arts) == 1 and arts[0].text_in_force.strip() == "Σύντομο άρθρο."
+
+
+def test_plural_paratimata_header_not_mis_read_as_annex_TA():
+    """'ΠΑΡΑΡΤΗΜΑΤΑ' (the plural section header) must NOT match the annex anchor as
+    ΠΑΡΑΡΤΗΜΑ + label 'ΤΑ'. The real annex that follows is what's captured."""
+    law = Law(instrument_id="Β΄3283/2025", instrument_key="x", instrument_type=TYPE_NOMOS)
+    law = segment("Άρθρο 1\nΣκοπός του παρόντος.\n\nΠΑΡΑΡΤΗΜΑΤΑ\n\n"
+                  "ΠΑΡΑΡΤΗΜΑ Α'\nΔΙΚΑΙΟΛΟΓΗΤΙΚΑ Οι υποψήφιοι υποβάλλουν τα έγγραφα.\n", law)
+    annex = [p for p in law.provisions if p.chunk_type == "annex"]
+    assert all(p.article_no != "ΤΑ" for p in annex)        # no bogus 'ΤΑ' annex
+    assert any(p.article_no == "Α'" for p in annex)        # the real ΠΑΡΑΡΤΗΜΑ Α' is captured
+
+
 def test_short_no_article_document_stays_single_full_chunk():
     # backward-compatible: a short decision (no Άρθρα) is still ONE '#full' chunk
     law = Law(instrument_id="Β΄2/2025", instrument_key="x", instrument_type=TYPE_NOMOS)
