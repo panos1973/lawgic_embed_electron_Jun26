@@ -140,6 +140,11 @@ def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[L
     # (not per-chunk vectors). Cheap (one small call); deterministic fallback w/o key.
     law = _stage(f"LLM ({config.LLM_PROVIDER})", "summarize (document)",
                  lambda: enrich.summarize_law(law))
+    # Make tables semantically retrievable: append a Greek narration (one clause per
+    # row) to any chunk with a table, BEFORE embedding, so the vector isn't a diluted
+    # grid. Runs only on table-bearing chunks; the markdown + table_json are untouched.
+    law = _stage(f"LLM ({config.LLM_PROVIDER})", "narrate tables",
+                 lambda: enrich.narrate_tables(law, progress=lambda m: emit("enrich", m)))
     chunks = law.ordered_texts()
     emit("embed", f"{law.instrument_id}: embedding {len(chunks)} chunk(s)")
     log.info("embed %s: %d chunk(s)", law.instrument_id, len(chunks))

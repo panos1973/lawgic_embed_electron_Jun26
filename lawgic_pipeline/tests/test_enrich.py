@@ -248,3 +248,53 @@ def test_article38_like_fills_dkn_volume():
     law = _law("", "Διαφάνεια τιμών στα καταναλωτικά προϊόντα, ν. 2251/1994.")
     classify_dkn(law)
     assert "ΕΜΠΟΡΙΚΗ ΝΟΜΟΘΕΣΙΑ" in law.provisions[0].domain_dkn
+
+
+# ── table narration (makes a table's rows retrievable by meaning) ──
+from pipeline.enrich import narrate_tables  # noqa: E402
+from pipeline.tables import tables_json      # noqa: E402
+from models import Provision  # noqa: E402
+
+
+def _table_law():
+    md = ("Πρόγραμμα Μαθημάτων\n\n"
+          "| Κωδικός | Τίτλος | ECTS |\n| --- | --- | --- |\n"
+          "| BT_1.3 | Δομική Βιολογία | 5 |\n")
+    law = Law(instrument_id="Β΄734/2025", instrument_key="x", instrument_type=TYPE_NOMOS)
+    law.provisions.append(Provision(
+        canonical_id="Β΄734/2025#αρ.6", instrument_id="Β΄734/2025", instrument_key="x",
+        instrument_type=TYPE_NOMOS, article_no="6", chunk_type="article",
+        text_in_force=md, text_normalized="orig", text_stemmed="orig", content_hash="orig"))
+    return law, md
+
+
+def test_narrate_tables_appends_narration_and_resyncs_bm25():
+    law, _ = _table_law()
+    p = law.provisions[0]
+    fake = lambda system, user, want_json=True, max_tokens=1024: \
+        "Το μάθημα Δομική Βιολογία (BT_1.3) αξίζει 5 ECTS."
+    narrate_tables(law, complete=fake)
+    assert p.text_in_force.startswith("Πρόγραμμα Μαθημάτων")        # original kept
+    assert "| Κωδικός | Τίτλος | ECTS |" in p.text_in_force         # verbatim markdown intact
+    assert "Δομική Βιολογία (BT_1.3) αξίζει 5 ECTS" in p.text_in_force   # narration appended
+    assert p.content_hash != "orig"                                # derived fields re-synced
+    assert "αξιζει" in p.text_normalized                           # narration folded into BM25
+    assert tables_json(p.text_in_force) is not None                # table_json still recoverable
+
+
+def test_narrate_tables_skips_chunks_without_tables():
+    law = Law(instrument_id="ν.1/2024", instrument_key="x", instrument_type=TYPE_NOMOS)
+    law.provisions.append(Provision(
+        canonical_id="ν.1/2024#αρ.1", instrument_id="ν.1/2024", instrument_key="x",
+        instrument_type=TYPE_NOMOS, article_no="1", text_in_force="Απλό κείμενο χωρίς πίνακα."))
+    calls = []
+    narrate_tables(law, complete=lambda *a, **k: calls.append(1) or "x")
+    assert not calls and law.provisions[0].text_in_force == "Απλό κείμενο χωρίς πίνακα."
+
+
+def test_narrate_tables_degrades_without_llm_key():
+    law, md = _table_law()
+    def no_key(*a, **k):
+        raise SystemExit("no key")
+    narrate_tables(law, complete=no_key)               # must not raise
+    assert law.provisions[0].text_in_force == md       # left exactly as-is
