@@ -27,7 +27,9 @@ function defaults() {
     // Azure OpenAI (gpt-4.1 / gpt-4.1-mini): endpoint is pre-filled (not a secret),
     // key is entered by the user (encrypted at rest), model name == deployment name.
     azureOpenaiEndpoint: 'https://copr-lawgic.openai.azure.com/',
-    azureOpenaiKey: '', azureOpenaiApiVersion: '2024-10-21',
+    // 2024-12-01-preview serves gpt-4.1-mini for BOTH text and image (vision); the
+    // older 2024-10-21 404s the multimodal call with DeploymentNotFound.
+    azureOpenaiKey: '', azureOpenaiApiVersion: '2024-12-01-preview',
     llmProvider: 'anthropic', llmModel: 'claude-haiku-4-5', llmThinking: false,
     amendExtractor: 'deterministic',
     stateDb: path.join(app.getPath('userData'), 'lawgic_state.db'),
