@@ -80,6 +80,24 @@ def _warn_if_no_llm_key():
             print(f"WARNING: no {config.LLM_PROVIDER} key — LLM enrichment disabled")
 
 
+def _emit_run_config():
+    """Record EXACTLY which endpoints / keys / deployment this run uses (secrets masked
+    to a fingerprint), to BOTH the Activity log and lawgic.log — so a wrong or
+    mismatched credential is visible up front instead of as a mid-run 401/404."""
+    try:
+        import diag
+        import logsetup
+        cfg = diag.config_fingerprint()
+        logsetup.get("cli").info("run config: %s", cfg)
+        emit({"type": "stage", "doc": "", "stage": "config",
+              "msg": (f"DI {cfg['azure_di']['host']} key {cfg['azure_di']['key']} · "
+                      f"LLM {cfg['llm']['provider']} {cfg['llm']['deployment_or_model']} "
+                      f"@ {cfg['llm']['azure_endpoint']} api {cfg['llm']['azure_api_version']} "
+                      f"key {cfg['llm']['key']} · vision={cfg['table_vision']}")})
+    except Exception:  # noqa: BLE001 — diagnostics must never block a run
+        pass
+
+
 def cmd_ingest(folder: str):
     import weaviate_io as wio
     import orchestrator
@@ -122,6 +140,7 @@ def cmd_ingest(folder: str):
         return c
 
     _warn_if_no_llm_key()
+    _emit_run_config()
     try:
         pdfs = sorted(glob.glob(os.path.join(folder, "**", "*.pdf"), recursive=True))
         # Oldest-first by filename keeps a stable order; true chronological ordering
@@ -237,6 +256,7 @@ def cmd_enrich(folder: str):
             print(f"\nPAUSED — {fe.provider} ({fe.stage}): {fe.detail}")
         return
     _warn_if_no_llm_key()
+    _emit_run_config()
     try:
         pdfs = sorted(glob.glob(os.path.join(folder, "**", "*.pdf"), recursive=True))
         total = len(pdfs)
