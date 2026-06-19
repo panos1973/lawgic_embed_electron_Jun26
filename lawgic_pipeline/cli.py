@@ -90,7 +90,8 @@ def _emit_run_config():
         cfg = diag.config_fingerprint()
         logsetup.get("cli").info("run config: %s", cfg)
         emit({"type": "stage", "doc": "", "stage": "config",
-              "msg": (f"DI {cfg['azure_di']['host']} key {cfg['azure_di']['key']} · "
+              "msg": (f"DI {cfg['azure_di']['host']} key {cfg['azure_di']['key']} "
+                      f"model {cfg['azure_di']['model']} · "
                       f"LLM {cfg['llm']['provider']} {cfg['llm']['deployment_or_model']} "
                       f"@ {cfg['llm']['azure_endpoint']} api {cfg['llm']['azure_api_version']} "
                       f"key {cfg['llm']['key']} · vision={cfg['table_vision']}")})

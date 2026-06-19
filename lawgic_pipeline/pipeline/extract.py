@@ -36,7 +36,7 @@ class ExtractResult:
 
 
 def _azure_layout_markdown(path: str, pages: list[int] | None = None) -> str:
-    """Run Azure DI prebuilt-layout and return markdown.
+    """Run Azure DI (config.AZURE_DI_MODEL, default prebuilt-layout) and return markdown.
 
     `pages` (1-based) restricts analysis to specific pages (the table-page upgrade);
     None analyses the whole document. Raises if DI is not configured — callers guard.
@@ -56,7 +56,7 @@ def _azure_layout_markdown(path: str, pages: list[int] | None = None) -> str:
         body = AnalyzeDocumentRequest(bytes_source=f.read())
     page_arg = ",".join(str(p) for p in pages) if pages else None
     poller = client.begin_analyze_document(
-        "prebuilt-layout", body,
+        config.AZURE_DI_MODEL or "prebuilt-layout", body,
         output_content_format=DocumentContentFormat.MARKDOWN,
         pages=page_arg)
     return poller.result().content or ""

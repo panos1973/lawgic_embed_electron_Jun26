@@ -190,7 +190,8 @@ def config_fingerprint() -> dict:
     return {
         "weaviate": {"host": _host(config.WEAVIATE_URL), "key": _fp(config.WEAVIATE_API_KEY)},
         "voyage": {"key": _fp(config.VOYAGE_API_KEY)},
-        "azure_di": {"host": _host(config.AZURE_DI_ENDPOINT), "key": _fp(config.AZURE_DI_KEY)},
+        "azure_di": {"host": _host(config.AZURE_DI_ENDPOINT), "key": _fp(config.AZURE_DI_KEY),
+                     "model": getattr(config, "AZURE_DI_MODEL", "prebuilt-layout")},
         "llm": {
             "provider": prov,
             "deployment_or_model": config.LLM_MODEL or "(provider default)",
