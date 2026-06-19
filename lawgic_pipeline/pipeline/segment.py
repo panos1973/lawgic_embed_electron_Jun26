@@ -54,6 +54,14 @@ _KEYWORD = {"book": "ΒΙΒΛΙΟ", "part": "ΜΕΡΟΣ", "chapter": "ΚΕΦΑΛ
 # derivation-table row, not a real article (real bodies open with the title text).
 _REF_BODY = re.compile(r"Άρθρο\s+\d")
 
+# A body that is ONLY the bare "Annexes" section-divider word ("Παραρτήματα") is a
+# heading announcing the annex section — the real annexes follow as their own
+# ΠΑΡΑΡΤΗΜΑ chunks — not article content. Two-column extraction can even duplicate
+# the line, and the column merge garbles the number ("Άρθρο 20 / Παραρτήματα" then a
+# merged "Άρθρο 2200 / Παραρτήματα"). Dropping it removes the empty/duplicate article
+# chunks without touching the real annexes.
+_DIVIDER_BODY = re.compile(r"^(?:ΠΑΡΑΡΤΗΜΑΤΑ|Παραρτήματα|ΠΑΡΑΡΤΗΜΑ|Παράρτημα)\s*$")
+
 
 def _first_line(block: str) -> str:
     for line in block.splitlines():
@@ -335,6 +343,11 @@ def segment(text: str, law: Law) -> Law:
         # law. Skip without claiming the number, so a real header for it elsewhere
         # can still be emitted.
         if _REF_BODY.match(body):
+            continue
+        # bare "Παραρτήματα" header (the annex section divider) -> not a real
+        # article; skip without claiming the number (the real annexes follow as
+        # ΠΑΡΑΡΤΗΜΑ chunks). Also kills the column-merge duplicate "Άρθρο 2200".
+        if _DIVIDER_BODY.match(body.strip()):
             continue
         seen_articles.add(art_no)
         if len(body) > _ENACTED_BODY_MAX:

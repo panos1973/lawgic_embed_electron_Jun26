@@ -33,6 +33,24 @@ def test_normal_article_unaffected_by_oversize_cap():
     assert law.provisions[0].canonical_id == "ν.5090/2024#αρ.1"
 
 
+def test_drops_bare_annex_divider_articles():
+    """A bare 'Παραρτήματα' section header is not a real article — and two-column
+    extraction can duplicate it, garbling 'Άρθρο 20' into a merged 'Άρθρο 2200'.
+    Both must be dropped; the real annex (ΠΑΡΑΡΤΗΜΑ) and real articles stay."""
+    law = Law(instrument_id="Β΄734/2025", instrument_key="x", instrument_type=TYPE_NOMOS)
+    text = ("Άρθρο 1\nΣκοπός Ο σκοπός του παρόντος είναι σαφής.\n\n"
+            "Άρθρο 20\nΠαραρτήματα\n\n"
+            "Άρθρο 2200\nΠαραρτήματα\n\n"
+            "ΠΑΡΑΡΤΗΜΑ 1\nΔΙΚΑΙΟΛΟΓΗΤΙΚΑ Οι υποψήφιοι υποβάλλουν τα εξής έγγραφα.\n")
+    law = segment(text, law)
+    arts = [p.article_no for p in law.provisions if p.chunk_type == "article"]
+    assert "20" not in arts and "2200" not in arts          # both divider chunks dropped
+    assert "1" in arts                                      # real article kept
+    annex = [p for p in law.provisions if p.chunk_type == "annex"]
+    assert len(annex) == 1 and "ΔΙΚΑΙΟΛΟΓΗΤΙΚΑ" in annex[0].text_in_force
+    assert all(p.text_in_force.strip() != "Παραρτήματα" for p in law.provisions)
+
+
 def test_short_no_article_document_stays_single_full_chunk():
     # backward-compatible: a short decision (no Άρθρα) is still ONE '#full' chunk
     law = Law(instrument_id="Β΄2/2025", instrument_key="x", instrument_type=TYPE_NOMOS)
