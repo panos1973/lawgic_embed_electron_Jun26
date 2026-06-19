@@ -120,11 +120,12 @@ def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
         if getattr(config, "TABLE_VISION", False) and upgrade_pages:
             from pipeline.table_vision import read_page_vision
             for pg in upgrade_pages:
-                r = read_page_vision(path, pg)
+                r, why = read_page_vision(path, pg)
                 if r and 1 <= pg <= len(pages_markdown):
                     pages_markdown[pg - 1] = r
-                elif r is None:
-                    warnings.append(f"page vision: page {pg} not read, kept extracted text")
+                else:
+                    warnings.append(
+                        f"page vision: page {pg} not read ({why}); kept extracted text")
         text = "\n\n".join(m for m in pages_markdown if m)
 
     # Masthead is parsed on the full text (it needs the cover block); the body
