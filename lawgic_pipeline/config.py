@@ -34,9 +34,13 @@ DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")   # Alibaba DashScop
 # Azure OpenAI (gpt-4.1 / gpt-4.1-mini) — needs endpoint + key + api-version; the
 # chosen model name is used as the Azure DEPLOYMENT name. Set via the app Settings
 # or these env vars. (Endpoint is not a secret; the key must come from env/Settings.)
+# api-version note: 2024-10-21 (GA) serves gpt-4.1* TEXT, but the IMAGE/multimodal
+# route for these 2025 models needs a newer version — an older one 404s the vision
+# call with "DeploymentNotFound" while text works. 2024-12-01-preview serves both
+# (it is what Azure's own portal sample shows for the gpt-4.1-mini deployment).
 AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_KEY = os.environ.get("AZURE_OPENAI_KEY", "")
-AZURE_OPENAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21")
+AZURE_OPENAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
 
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")   # anthropic|deepseek|gemini|openai|qwen
 LLM_MODEL = os.environ.get("LLM_MODEL", "")                  # blank -> provider default
