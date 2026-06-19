@@ -18,10 +18,12 @@ silently when no provider key is set, so the pipeline never blocks on them.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 
 import llm
+from greek_stem import stem_text
 from models import Law
 from normalize import fold_for_bm25
 
@@ -468,4 +470,64 @@ def summarize_law(law: Law, complete=None) -> Law:
         if looks_fatal(e):
             raise                                            # wrong key/endpoint -> stop
         law.summary = _law_summary_fallback(law)[:1200]      # transient -> fallback
+    return law
+
+
+# A raw markdown table embeds as ONE diluted vector — broad queries find it, but a
+# specific-cell or paraphrased question ("the protein-structure course") misses,
+# because the value is averaged across every row. So we ADD a faithful Greek prose
+# narration (one clause per row) to the chunk: the verbatim markdown + structured
+# table_json stay for exact lookup, while the narration makes each row retrievable
+# by meaning. Instruction in English (reliable), output in Greek (the corpus).
+_TABLE_NARRATION_SYSTEM = (
+    "You are given one or more tables extracted from a Greek government gazette "
+    "(ΦΕΚ), as JSON: a list of tables; each table a list of rows; each row a list of "
+    "cell strings. Write a faithful narration IN GREEK: one short sentence per DATA "
+    "row, weaving in the value of each column so the row is findable by meaning "
+    "(e.g. «Το μάθημα Δομική Βιολογία (BT_1.3) είναι μάθημα επιλογής, 5 ECTS, στο Α' "
+    "εξάμηνο.»). Do NOT invent, omit, or alter any number or code; skip header rows. "
+    "Return ONLY the narration text, with no preamble."
+)
+
+
+def narrate_tables(law: Law, progress=None, complete=None) -> Law:
+    """Append a faithful Greek narration (one clause per data row) to every provision
+    whose text contains a table, so the EMBEDDED vector carries the table's meaning
+    — not just a diluted markdown grid. The verbatim markdown and the structured
+    table_json are left untouched (exact lookup still works); the narration only adds
+    semantic, paraphrase-friendly text (also indexed for BM25). One cheap text-LLM
+    call per table-bearing chunk. Skips silently without an LLM key; a wrong key is
+    fatal (consistent with enrich_llm), a transient error leaves that table as-is."""
+    from pipeline.tables import tables_from_text
+    if complete is None:
+        complete = llm.complete
+    narrated = 0
+    for p in law.provisions:
+        tabs = tables_from_text(p.text_in_force or "")
+        if not tabs:
+            continue
+        try:
+            out = complete(_TABLE_NARRATION_SYSTEM, json.dumps(tabs, ensure_ascii=False),
+                           want_json=False, max_tokens=1500)
+        except SystemExit:
+            if progress and not narrated:
+                progress("no LLM key — skipping table narration")
+            return law
+        except Exception as e:                               # noqa: BLE001
+            from errors import looks_fatal
+            if looks_fatal(e):
+                raise                                        # wrong key/endpoint -> stop
+            continue                                         # transient -> leave table as-is
+        narration = (out or "").strip()
+        if not narration or narration in (p.text_in_force or ""):
+            continue
+        body = f"{p.text_in_force}\n\n[Πίνακας — αφήγηση περιεχομένου]\n{narration}"
+        p.text_in_force = body
+        p.text_normalized = fold_for_bm25(body)              # keep BM25 fields in sync
+        p.text_stemmed = stem_text(body)
+        p.content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        narrated += 1
+        if progress:
+            where = f"Άρθρο {p.article_no}" if p.article_no else (p.chunk_type or "chunk")
+            progress(f"{law.instrument_id}: table narrated — {where}")
     return law
