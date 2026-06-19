@@ -13,7 +13,8 @@ from typing import Callable, Optional
 import config
 from state import State
 from models import (Law, make_instrument_id, make_instrument_key,
-                    make_decision_id, make_decision_key)
+                    make_decision_id, make_decision_key,
+                    make_dated_instrument_id, make_dated_instrument_key)
 from normalize import normalize_display
 import pipeline.extract as extract
 import pipeline.segment as segment
@@ -70,10 +71,20 @@ def _build_law(seg, mh) -> Optional[Law]:
         ikey = make_decision_key(series, fek_no, year, seg.item)
     else:
         itype, number = seg.instrument_type, mh.get("number")
-        if not itype or number is None or year is None:
+        if not itype or year is None:
             return None
-        iid = make_instrument_id(itype, number, year)
-        ikey = make_instrument_key(itype, number, year)
+        if number is None:
+            # numberless primary instrument (Π.Ν.Π., ψήφισμα): cited by gazette
+            # coordinates, not a NUM/YEAR -> build a dated id from the FEK reference
+            # instead of dropping it to review.
+            series, fek_no = mh.get("fek_series") or "", mh.get("fek_number") or ""
+            if not (series and fek_no):
+                return None
+            iid = make_dated_instrument_id(itype, series, fek_no, year)
+            ikey = make_dated_instrument_key(itype, series, fek_no, year)
+        else:
+            iid = make_instrument_id(itype, number, year)
+            ikey = make_instrument_key(itype, number, year)
     return Law(instrument_id=iid, instrument_key=ikey,
                instrument_type=seg.instrument_type,
                jurisdiction=config.DEFAULT_TENANT,

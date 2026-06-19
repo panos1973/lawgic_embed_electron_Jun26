@@ -7,7 +7,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pipeline.multiact import split_acts  # noqa: E402
 from models import (make_decision_id, make_decision_key, TYPE_NOMOS, TYPE_YA,  # noqa: E402
                     TYPE_KYA, TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD,
-                    TYPE_KANAP)
+                    TYPE_KANAP, TYPE_PNP, make_dated_instrument_id,
+                    make_dated_instrument_key, make_provision_id)
+
+
+def test_pnp_numberless_instrument_gets_a_dated_id():
+    """A Π.Ν.Π. (Act of Legislative Content) has NO instrument number — it is cited by
+    gazette coordinates. Its id must be built from the FEK reference, not dropped to
+    review (the 'act not identified — type=PNP, number=None' bug)."""
+    iid = make_dated_instrument_id(TYPE_PNP, "Α", "132", 2023)
+    ikey = make_dated_instrument_key(TYPE_PNP, "Α", "132", 2023)
+    assert iid == "Π.Ν.Π. Α΄132/2023"
+    assert ikey == "PNPΑ132/2023"
+    # articles namespace cleanly under it (spelled ordinals, as Π.Ν.Π. use)
+    assert make_provision_id(iid, "πρώτο") == "Π.Ν.Π. Α΄132/2023#αρ.πρώτο"
 
 
 # regression: a spelled "Αριθμός <word>" heading (NO digit) must NOT be read as an
