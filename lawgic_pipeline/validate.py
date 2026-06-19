@@ -40,7 +40,8 @@ import pipeline.delegate as delegate
 import pipeline.multiact as multiact
 import pipeline.refs as refs
 from models import (Law, make_instrument_id, make_instrument_key,
-                    make_decision_id, make_decision_key)
+                    make_decision_id, make_decision_key,
+                    make_dated_instrument_id, make_dated_instrument_key)
 
 # A provision body shorter than this is suspicious (segmentation likely split on a
 # false anchor — e.g. the word "Άρθρο" inside a sentence).
@@ -157,10 +158,17 @@ def _law_from_act(seg: "multiact.ActSegment", mh: dict):
                      make_decision_key(series, fek_no, year, seg.item))
     else:
         itype, number = seg.instrument_type, mh.get("number")
-        if not itype or number is None or year is None:
+        if not itype or year is None:
             return None
-        iid, ikey = (make_instrument_id(itype, number, year),
-                     make_instrument_key(itype, number, year))
+        if number is None:                          # Π.Ν.Π./ψήφισμα: cited by FEK ref
+            series, fek_no = mh.get("fek_series") or "", mh.get("fek_number") or ""
+            if not (series and fek_no):
+                return None
+            iid, ikey = (make_dated_instrument_id(itype, series, fek_no, year),
+                         make_dated_instrument_key(itype, series, fek_no, year))
+        else:
+            iid, ikey = (make_instrument_id(itype, number, year),
+                         make_instrument_key(itype, number, year))
     return Law(instrument_id=iid, instrument_key=ikey,
                instrument_type=seg.instrument_type,
                title=seg.title or mh.get("title", ""),

@@ -56,6 +56,18 @@ def make_decision_key(series: str, fek_number: str, year: int,
     return f"{base}#{item}" if item else base
 
 
+def make_dated_instrument_id(t: str, series: str, fek_number: str, year: int) -> str:
+    """Citable id for a primary FEK-A instrument that has NO number — Π.Ν.Π. (Act of
+    Legislative Content) and ψήφισμα are cited by gazette coordinates, not a NUM/YEAR.
+    Like a decision id, but keeps the instrument-type prefix, e.g. 'Π.Ν.Π. Α΄132/2023'."""
+    prefix = _PREFIX_DISPLAY.get(t, "").strip()
+    return f"{prefix} {series}΄{fek_number}/{year}".strip()
+
+
+def make_dated_instrument_key(t: str, series: str, fek_number: str, year: int) -> str:
+    return f"{_PREFIX_KEY.get(t, '')}{series}{fek_number}/{year}"
+
+
 def make_provision_id(instrument_id: str, article: str,
                       paragraph: Optional[str] = None) -> str:
     loc = f"αρ.{article}"
