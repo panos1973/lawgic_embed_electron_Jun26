@@ -50,10 +50,15 @@ def test_di_ok(monkeypatch):
 
 
 def test_di_auth_error(monkeypatch):
-    monkeypatch.setattr(config, "AZURE_DI_ENDPOINT", "https://x/")
-    monkeypatch.setattr(config, "AZURE_DI_KEY", "bad")
-    r = diag.check_azure_di(_http(403))
+    monkeypatch.setattr(config, "AZURE_DI_ENDPOINT", "https://lawgic.cognitiveservices.azure.com/")
+    monkeypatch.setattr(config, "AZURE_DI_KEY", "supersecretdikey1234")
+    r = diag.check_azure_di(_http(401))
     assert r["ok"] is False and r["status"] == "auth_error"
+    # detail shows the endpoint host + a key FINGERPRINT (never the value) so a
+    # key/endpoint mismatch is obvious at a glance
+    assert "lawgic.cognitiveservices.azure.com" in r["detail"]
+    assert "supersecretdikey1234" not in r["detail"]
+    assert "supe…1234·20" in r["detail"]
 
 
 def test_di_not_found(monkeypatch):
@@ -116,3 +121,37 @@ def test_configured_credentials_presence_only(monkeypatch):
     c = diag.configured_credentials()
     assert c["azure_di"] is True and c["voyage_key"] is False
     assert "supersecret" not in str(c)              # presence only, never values
+
+
+def test_fingerprint_masks_secret():
+    # a real-length key shows only first4…last4·len — never the value
+    fp = diag._fp("eG1rTVZqQWabcdefXYZ0123456789tail")
+    assert "eG1r" in fp and "tail" in fp and "·33" in fp
+    assert "eG1rTVZqQWabcdefXYZ0123456789tail" not in fp
+    assert diag._fp("") == "(not set)"
+    assert diag._fp("short") == "(set·5 chars)"        # too short to split safely
+
+
+def test_host_strips_path_and_scheme():
+    assert diag._host("https://copr-lawgic.openai.azure.com/openai/deployments/x") \
+        == "copr-lawgic.openai.azure.com"
+    assert diag._host("") == "(not set)"
+
+
+def test_config_fingerprint_is_safe_and_complete(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER", "azure")
+    monkeypatch.setattr(config, "LLM_MODEL", "gpt-4.1-mini")
+    monkeypatch.setattr(config, "AZURE_OPENAI_ENDPOINT", "https://copr-lawgic.openai.azure.com/")
+    monkeypatch.setattr(config, "AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+    monkeypatch.setattr(config, "AZURE_DI_ENDPOINT", "https://lawgic.cognitiveservices.azure.com/")
+    monkeypatch.setattr(config, "AZURE_DI_KEY", "didikeydidikeydidikey")
+    monkeypatch.setenv("AZURE_OPENAI_KEY", "azurekeyazurekeyazurekey")
+    fp = diag.config_fingerprint()
+    # surfaces exactly what each service uses — endpoints + deployment + api-version
+    assert fp["azure_di"]["host"] == "lawgic.cognitiveservices.azure.com"
+    assert fp["llm"]["azure_endpoint"] == "copr-lawgic.openai.azure.com"
+    assert fp["llm"]["deployment_or_model"] == "gpt-4.1-mini"
+    assert fp["llm"]["azure_api_version"] == "2024-12-01-preview"
+    # but never the raw key values
+    s = str(fp)
+    assert "didikeydidikeydidikey" not in s and "azurekeyazurekeyazurekey" not in s
