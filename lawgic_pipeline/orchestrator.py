@@ -94,9 +94,39 @@ def _build_law(seg, mh) -> Optional[Law]:
                fek_date=mh.get("fek_date") or "")
 
 
+def _llm_identify(seg, mh, emit=lambda *a: None) -> Optional[Law]:
+    """Last-resort identification when the deterministic masthead couldn't type the
+    act: the LLM reads the opening text and names the instrument type (+ a number when
+    the type carries one). The canonical id is still built DETERMINISTICALLY from that
+    type + the gazette coordinates, so it stays idempotent. Returns None (act -> review)
+    without an LLM key, or if the model can't place the document in our taxonomy."""
+    try:
+        import pipeline.classify_llm as classify_llm
+        guess = classify_llm.classify_instrument(seg.text)
+    except SystemExit:
+        return None                                  # no LLM key -> fallback unavailable
+    except Exception as e:                           # noqa: BLE001
+        if looks_fatal(e):
+            raise                                    # wrong key/endpoint -> stop the run
+        return None
+    if not guess:
+        return None
+    seg.instrument_type = guess["instrument_type"]   # fill the missing label
+    mh2 = dict(mh)
+    if guess.get("number") is not None:
+        mh2["number"] = guess["number"]
+    law = _build_law(seg, mh2)
+    if law is not None:
+        emit("classify", f"{law.instrument_id}: type identified by LLM "
+             f"({guess['instrument_type']}) — id built deterministically")
+    return law
+
+
 def _process_act(client, seg, mh, emit=lambda *a: None) -> tuple[str, Optional[Law]]:
     """Run the full per-instrument spine for one act. Returns (status, law)."""
     law = _build_law(seg, mh)
+    if law is None:
+        law = _llm_identify(seg, mh, emit)           # LLM reads the doc as a last resort
     if law is None:
         # say WHY it could not be identified — the missing field is what the
         # operator needs to see in the log (vs a bare "could not be identified").
