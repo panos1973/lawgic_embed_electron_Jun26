@@ -109,6 +109,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          # Pass the tag explicitly — auto-detection from the git ref fails on some
+          # release events ("GitHub Releases requires a tag"). A release event always
+          # carries its tag, so this makes the upload robust.
+          tag_name: ${{ github.event.release.tag_name }}
           files: lawgic_electron/dist/*.exe
 
       - name: Upload .exe as workflow artifact
