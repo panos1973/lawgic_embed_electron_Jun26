@@ -800,3 +800,12 @@ if __name__ == "__main__":
             print(f"ERROR {fn.__name__}: {type(e).__name__}: {e}")
     print(f"\n{passed}/{len(fns)} passed")
     sys.exit(0 if passed == len(fns) else 1)
+
+
+def test_law_number_strips_dotted_prefix():
+    """The denormalized law_number = id minus type prefix. The dotted Π.Ν.Π. prefix
+    must not leave a stray leading space (broke exact-match filtering on law_number)."""
+    assert wio._law_number_of("ν.5086/2024") == "5086/2024"
+    assert wio._law_number_of("Β΄913/2025") == "Β΄913/2025"
+    assert wio._law_number_of("Π.Ν.Π. Α΄132/2023") == "Α΄132/2023"   # no leading space
+    assert wio._target_law_number("Π.Ν.Π. Α΄132/2023#αρ.πρώτο") == "Α΄132/2023"
