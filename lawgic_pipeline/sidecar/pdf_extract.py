@@ -165,6 +165,35 @@ def _table_to_markdown(rows) -> str:
     return "\n".join(out)
 
 
+def _page_needs_ocr(raw: str, score_text) -> tuple[bool, bool, str]:
+    """Decide whether one page must be routed to OCR (Azure DI).
+
+    A page needs OCR in two distinct situations, and the caller treats them
+    differently:
+
+      1. NO usable text layer — a scanned image or a blank page yields almost
+         nothing (a few chars of header noise). needs_ocr=True, is_corrupt=False:
+         the little clean text is kept as a fallback for when DI is not
+         configured (DI, when present, replaces the page outright).
+      2. CORRUPTED text layer — enough characters came out, but they are garble
+         (mis-decoded font, (cid:NNN) tokens, box glyphs). needs_ocr=True,
+         is_corrupt=True: that garbage text is blanked so it never reaches the
+         embedder; only DI's render should stand in for it.
+
+    Returns (needs_ocr, is_corrupt, reason). This runs per page, so scanned
+    pages scattered anywhere in a long document — page 43 of 100, or a handful
+    spread through 500 — are each caught independently, not just whole-doc scans.
+    """
+    stripped = (raw or "").strip()
+    if len(stripped) < _TEXT_CHAR_THRESHOLD:
+        return True, False, "no usable text layer (image/blank page)"
+    if score_text is not None:
+        q = score_text(raw)
+        if not q.is_valid:
+            return True, True, q.reason
+    return False, False, ""
+
+
 def detect(path: str) -> dict:
     """Classify a PDF and return per-page text + table-page map (see module doc)."""
     import pdfplumber
@@ -190,18 +219,13 @@ def detect(path: str) -> dict:
                 raw = ""
                 warnings.append(f"page {i}: text extraction failed ({e})")
 
-            # Multi-signal quality gate (CID, garbled-Greek, box glyphs, '?' garble).
-            # Score the RAW page text — before normalize_glyphs strips (cid:NNN)
-            # tokens — so the CID signal is still visible. A page whose text is
-            # *corrupted* (not merely short) has no usable text layer and is routed
-            # to OCR rather than embedded; a short but clean page (small table,
-            # signature) is kept as-is.
-            if score_text is not None and len(raw.strip()) >= _TEXT_CHAR_THRESHOLD \
-                    and not score_text(raw).is_valid:
+            needs, corrupt, reason = _page_needs_ocr(raw, score_text)
+            if needs:
                 ocr_pages.append(i)
-                warnings.append(
-                    f"page {i}: low text quality -> OCR ({score_text(raw).reason})")
-                text = ""
+                warnings.append(f"page {i}: -> OCR ({reason})")
+                # blank only corrupted text; keep the little clean text of an image
+                # page as a fallback for when DI is not configured (DI replaces it).
+                text = "" if corrupt else normalize_glyphs(raw)
             else:
                 text = normalize_glyphs(raw)
 
