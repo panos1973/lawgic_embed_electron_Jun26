@@ -222,7 +222,7 @@ def _flat_props(p: Provision, law: Law = None, index: int = None,
                 total: int = None) -> dict:
     props = {
         "canonical_id": p.canonical_id, "instrument_key": p.instrument_key,
-        "document_type": p.instrument_type, "law_number": p.instrument_id.split(".")[-1],
+        "document_type": p.instrument_type, "law_number": _law_number_of(p.instrument_id),
         "fek_reference": f"{p.fek_series}_{p.fek_date[:4]}_{p.fek_number}" if p.fek_date else "",
         "article_number": p.article_no, "legal_force_status": p.status,
         "legal_domain": p.legal_domain, "domain_dkn": p.domain_dkn,
@@ -272,7 +272,7 @@ def load_document(client, law: Law, tenant: str = None):
         "instrument_key": law.instrument_key,
         "fek_reference": f"{law.fek_series}_{law.fek_date[:4]}_{law.fek_number}"
                          if law.fek_date else "",
-        "law_number": law.instrument_id.split(".")[-1],
+        "law_number": _law_number_of(law.instrument_id),
         "document_type": law.instrument_type,
         "document_category": law.document_category or None,
         "title": law.title,
@@ -333,7 +333,7 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
             vf = _enacted_valid_from(p, law)
             props = {
                 "canonical_id": p.canonical_id, "instrument_key": p.instrument_key,
-                "document_law_number": p.instrument_id.split(".")[-1],
+                "document_law_number": _law_number_of(p.instrument_id),
                 "article_number": p.article_no, "article_title": p.article_title,
                 "chunk_text": p.text_in_force, "table_json": _table_json(p),
                 "text_normalized": p.text_normalized, "text_stemmed": p.text_stemmed,
@@ -404,10 +404,18 @@ def update_law_enrichment(client, law: Law, tenant: str = None) -> int:
     return updated
 
 
+def _law_number_of(instrument_id: str) -> str:
+    """Bare law number for the denormalized law_number field: the id minus its type
+    prefix. 'ν.5086/2024'->'5086/2024', 'Β΄913/2025'->'Β΄913/2025',
+    'Π.Ν.Π. Α΄132/2023'->'Α΄132/2023' — the dotted Π.Ν.Π. prefix would otherwise leave
+    a stray leading space that breaks exact-match filtering on law_number."""
+    return instrument_id.split(".")[-1].strip()
+
+
 def _target_law_number(target_id: str) -> str:
     """'ν.4675/2024#αρ.24.παρ.2' -> '4675/2024' (denormalized for filtering)."""
     head = target_id.split("#", 1)[0]
-    return head.split(".")[-1] if "." in head else head
+    return (head.split(".")[-1] if "." in head else head).strip()
 
 
 def _target_article(target_id: str) -> str:
@@ -425,7 +433,7 @@ def load_amendments(client, ops: list[AmendmentOp], source_law: Law = None,
         or config.DEFAULT_TENANT
     ensure_tenant(client, config.GRAPH_AMENDMENT, tenant)
     amd = client.collections.use(config.GRAPH_AMENDMENT).with_tenant(tenant)
-    src_num = source_law.instrument_id.split(".")[-1] if source_law else ""
+    src_num = _law_number_of(source_law.instrument_id) if source_law else ""
     with amd.batch.dynamic() as b:
         for op in ops:
             props = {
@@ -473,7 +481,7 @@ def load_delegations(client, edges, source_law: Law = None, tenant: str = None):
         or config.DEFAULT_TENANT
     ensure_tenant(client, config.GRAPH_DELEGATION, tenant)
     deleg = client.collections.use(config.GRAPH_DELEGATION).with_tenant(tenant)
-    impl_num = source_law.instrument_id.split(".")[-1] if source_law else ""
+    impl_num = _law_number_of(source_law.instrument_id) if source_law else ""
     with deleg.batch.dynamic() as b:
         for e in edges:
             props = {
