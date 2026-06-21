@@ -228,6 +228,23 @@ def cmd_ingest(folder: str):
             # cancel not-yet-started files; let the few in-flight ones wind down
             pool.shutdown(wait=True, cancel_futures=True)
 
+        def _consolidate(label):
+            """PHASE 2 — fold amendment edges forward into versioned timelines for
+            everything ingested SO FAR. Runs after EACH subfolder so that subfolder's
+            laws are fully consolidated before the next starts. Cross-law + idempotent
+            and order-safe, so re-running as later subfolders land is correct — a
+            later subfolder's edges simply resolve against the now-larger corpus
+            (the repeated passes are the cost of per-subfolder consolidation)."""
+            try:
+                res = wio.assemble_article_timeline(main_client)
+                emit({"type": "stage", "doc": "", "stage": "consolidate",
+                      "msg": f"[{label}] articles={res.get('articles',0)} "
+                             f"versions={res.get('versions_written',0)} "
+                             f"pending={res.get('pending',0)}"})
+            except Exception as e:                       # never fail the run on this
+                emit({"type": "stage", "doc": "", "stage": "consolidate",
+                      "msg": f"[{label}] skipped: {e}"})
+
         for gi, (label, paths) in enumerate(groups, 1):
             if stop.is_set():
                 break                                    # a fatal in an earlier subfolder
@@ -237,31 +254,23 @@ def cmd_ingest(folder: str):
                 print(f"\n[folder {gi}/{len(groups)}] {label} — {len(paths)} PDF(s)")
             _run_group(paths)
             if not stop.is_set():
+                # subfolder finished cleanly -> consolidate it (and everything before
+                # it) now, so the timeline is current before the next subfolder starts
+                _consolidate(label)
                 emit({"type": "folder_done", "folder_name": label, "index": gi,
                       "groups": len(groups), "count": len(paths)})
 
         if fatal:
-            # Credential/endpoint failure — STOP (do not consolidate). The operator
-            # fixes the key/URL in Settings, saves, and resumes by re-running ingest:
-            # the state DB skips done files and retries the interrupted one.
+            # Credential/endpoint failure — STOP. Subfolders that finished before this
+            # one were already consolidated; the failed/remaining ones are not. The
+            # operator fixes the key/URL in Settings, saves, and resumes by re-running
+            # ingest: the state DB skips done files and retries the interrupted one.
             emit({"type": "fatal", **fatal})
             emit({"type": "summary", "counts": st.counts(), "paused": True})
             if not JSON:
                 print(f"\nPAUSED — {fatal['provider']} ({fatal['stage']}): "
                       f"{fatal['detail']}\n  Fix the key/URL and re-run to resume.")
             return
-
-        # PHASE 2 — serial cross-law consolidation (only when the batch finished
-        # without a fatal stop). Order-sensitive; safe, idempotent.
-        try:
-            res = wio.assemble_article_timeline(main_client)
-            emit({"type": "stage", "doc": "", "stage": "consolidate",
-                  "msg": f"articles={res.get('articles',0)} "
-                         f"versions={res.get('versions_written',0)} "
-                         f"pending={res.get('pending',0)}"})
-        except Exception as e:                           # never fail the run on this
-            emit({"type": "stage", "doc": "", "stage": "consolidate",
-                  "msg": f"skipped: {e}"})
 
         counts = st.counts()
         emit({"type": "summary", "counts": counts})
