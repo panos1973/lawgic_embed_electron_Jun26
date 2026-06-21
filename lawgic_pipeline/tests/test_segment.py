@@ -330,6 +330,23 @@ def test_unclosed_guillemet_masks_to_end():
     assert [p.article_no for p in law.provisions] == ["1"]   # 5,6 stay masked
 
 
+def test_mispaired_balanced_quote_does_not_swallow_real_articles():
+    """A dropped » makes the greedy matcher pair an early « with a LATER », so a
+    balanced-looking span spuriously spans real articles. Such a span betrays itself by
+    swallowing a line-start PLAIN-INTEGER header (the law's own article) and is bounded
+    there — while a genuine SUFFIXED insertion (5Α) nested inside stays masked."""
+    law = Law(instrument_id="ν.3/2024", instrument_key="x", instrument_type=TYPE_NOMOS)
+    # art 1's amendment quote loses its » -> its « pairs with art 3's » far away,
+    # swallowing real arts 2 and 3; art 2 carries a genuine suffixed insertion (5Α).
+    txt = ("Άρθρο 1\nΑρχή.\nαντικαθίσταται ως εξής: «νέο κείμενο της παραγράφου ένα\n"
+           "Άρθρο 2\nΔεύτερο\nπροστίθεται άρθρο 5Α ως εξής: «Άρθρο 5Α\nΕισαχθέν.»\n"
+           "Άρθρο 3\nΤρίτο\nΤελικό κείμενο.»")
+    law = segment(txt, law)
+    nums = [p.article_no for p in law.provisions if p.chunk_type == "article"]
+    assert "1" in nums and "2" in nums and "3" in nums   # real articles freed
+    assert "5Α" not in nums                               # suffixed insertion stays masked
+
+
 def test_long_dangling_guillemet_bounded_at_next_article():
     """When two-column/OCR extraction DROPS a closing », the dangling « must not mask
     the whole rest of the act to EOF — that hid arts 30-101 of ν.4368/2016. An

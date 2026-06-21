@@ -180,6 +180,13 @@ _ARTICLE_HEADER_HINT = re.compile(r"(?m)^[^\S\r\n]*#{0,6}[^\S\r\n]*Άρθρο[^\
 # Comfortably larger than a single inserted provision, far smaller than a half-doc
 # over-mask (ν.4368/2016 lost arts 30-101 — a 119k-char dangling span — this way).
 _DANGLING_QUOTE_MAX = 12_000
+# A line-start article header whose number is a PLAIN INTEGER (no Greek-letter suffix
+# like 40Α, and not preceded by «). These are the enacting law's OWN articles: genuine
+# insertions are numbered with suffixes to fit between existing ones (Άρθρο 40Α), so a
+# plain-integer header inside a quote span is a real article a dropped-» mis-pairing
+# swallowed. Used to re-bound mis-paired quote spans (see _quoted_spans).
+_PLAIN_ARTICLE_HEADER = re.compile(
+    r"(?m)^[^\S\r\n]*#{0,6}[^\S\r\n]*Άρθρο[^\S\r\n]+\d+(?![Α-Ωα-ω\d])")
 
 
 def _quote_forest(text: str) -> list[dict]:
@@ -201,11 +208,13 @@ def _quote_forest(text: str) -> list[dict]:
         elif ch == "»" and stack:
             node = stack.pop()
             node["end"] = i
+            node["closed"] = True                  # a real » paired this «
             (stack[-1]["children"] if stack else roots).append(node)
     if stack:                                      # unclosed « -> a » was dropped
         headers = [m.start() for m in _ARTICLE_HEADER_HINT.finditer(text)]
         while stack:
             node = stack.pop()
+            node["closed"] = False
             end = len(text)
             if end - node["start"] > _DANGLING_QUOTE_MAX:
                 j = bisect.bisect_right(headers, node["start"])
@@ -229,9 +238,22 @@ def _quoted_spans(text: str) -> list[tuple[int, int]]:
     article headers is the enacted body of a codification/ratification, not an
     insertion — segment INSIDE it and mask only its nested children (the foreign
     quotes inside the code's own articles).
+
+    Mis-pairing guard: when extraction drops a », the greedy matcher pairs an early «
+    with a LATER », producing a balanced-looking span that spuriously stretches across
+    real articles. Such a (properly closed) span betrays itself by swallowing a
+    line-start PLAIN-INTEGER article header — the enacting law's own article. We bound
+    the mask there, freeing the real articles, and recurse so the genuine (suffixed)
+    insertions nested inside them stay masked.
     """
+    import bisect
     n = len(text)
     masks: list[tuple[int, int]] = []
+    plain = [m.start() for m in _PLAIN_ARTICLE_HEADER.finditer(text)]
+
+    def first_plain_inside(start: int, end: int):
+        j = bisect.bisect_right(plain, start)
+        return plain[j] if j < len(plain) and plain[j] < end else None
 
     def visit(nodes: list[dict]) -> None:
         for nd in nodes:
@@ -241,6 +263,14 @@ def _quoted_spans(text: str) -> list[tuple[int, int]]:
                 and len(_ARTICLE_HEADER_HINT.findall(inner)) >= _ENACTED_MIN_ARTICLES)
             if enacted_body:
                 visit(nd["children"])              # unmask self, mask foreign quotes
+                continue
+            # Only a properly CLOSED span can be a dropped-» mis-pairing; a dangling «
+            # is already size-bounded in _quote_forest and may legitimately mask a
+            # short plain-integer insertion to its end.
+            b = first_plain_inside(nd["start"], nd["end"]) if nd.get("closed") else None
+            if b is not None:
+                masks.append((nd["start"], b))     # mask only up to the real article
+                visit([c for c in nd["children"] if c["start"] >= b])
             else:
                 masks.append((nd["start"], nd["end"]))
 
