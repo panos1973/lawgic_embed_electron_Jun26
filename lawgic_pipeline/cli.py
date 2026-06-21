@@ -240,6 +240,7 @@ def cmd_ingest(folder: str):
                 emit({"type": "stage", "doc": "", "stage": "consolidate",
                       "msg": f"[{label}] articles={res.get('articles',0)} "
                              f"versions={res.get('versions_written',0)} "
+                             f"linked={res.get('linked_subedits',0)} "
                              f"pending={res.get('pending',0)}"})
             except Exception as e:                       # never fail the run on this
                 emit({"type": "stage", "doc": "", "stage": "consolidate",
@@ -352,6 +353,7 @@ def cmd_consolidate():
         if not JSON:
             print(f"Timeline assembly: articles={result['articles']} "
                   f"versions_written={result['versions_written']} "
+                  f"linked_subedits={result.get('linked_subedits', 0)} "
                   f"pending(target missing)={result['pending']}")
     finally:
         client.close()

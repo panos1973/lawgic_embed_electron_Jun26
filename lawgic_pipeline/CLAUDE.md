@@ -96,10 +96,11 @@ Real-FEK hardening (validated against samplefek/ corpus):
     binary so the Windows .exe needs no Python install; adapt the old app's
     windows-latest build-and-release CI.
 
-Tests: lawgic_pipeline/tests/ — 270 passing (masthead, segment, amend, enrich
-domain + document_category + dkn, delegate, normalize, quality, multiact, refs,
-weaviate_io loaders + versioned timeline assembly + graph-status + provision
-history, extract integration, full-spine e2e, validate harness).
+Tests: lawgic_pipeline/tests/ — 331 passing (masthead, segment, amend, enrich
+domain + document_category + dkn, delegate, normalize, quality, ocr-routing,
+multiact, refs, weaviate_io loaders + grain-aware versioned timeline assembly +
+graph-status + provision history, extract integration, full-spine e2e, validate
+harness).
 Run: `python -m pytest tests/ -q`.
 
 Versioned temporal model (docs/10-amendment-temporal-architecture.md): provisions
@@ -108,7 +109,12 @@ flat keyed the same). assemble_article_timeline (aliased as consolidate_cross_la
 driven by `cli consolidate`) folds amendment edges forward by effective_date into
 valid_from/valid_to/is_current/legal_force_status versions on flat + article, so
 retrieval can answer both "in force now" (is_current) and "as of date D"
-(valid_from<=D<valid_to). QA lenses: `cli graph-status` reports dangling amendment
+(valid_from<=D<valid_to). Grain-aware (provisions are embedded at ARTICLE grain):
+edges are grouped by article-level id; a WHOLE-article edit ('…#αρ.15') drives the
+version timeline, a SUB-article edit ('…#αρ.15.παρ.2') is LINKED to the article
+(surfaced via its amendment edge, never rewriting the body), and an edge whose
+target law is not ingested stays pending — no stub provision node is seeded from
+amendment text (that previously polluted retrieval with partial paragraph chunks). QA lenses: `cli graph-status` reports dangling amendment
 targets (target law absent) + unresolved references (extractor couldn't pin a
 canonical target) + undated edges; `cli history --law L --article N` traces one
 provision's full timeline — the amendment edges that target it ⋈ its text versions
