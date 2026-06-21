@@ -93,17 +93,32 @@ $('resumeBtn').addEventListener('click', () => {
 $('cancelBtn').addEventListener('click', () => window.api.cancel());
 
 let total = 0, doneCount = 0;
+let folderInfo = '';   // "folder 3/10 · name" — current subfolder, shown with per-file progress
 window.api.onPipelineEvent((o) => {
   switch (o.type) {
     case 'scan':
-      total = o.total; doneCount = 0;
+      total = o.total; doneCount = 0; folderInfo = '';
       $('bar').style.width = '0%';
       $('progressLabel').textContent = `0 / ${total}`;
-      logLine({ stage: 'scan', doc: `${o.total} files`, msg: o.folder, ts: o.ts });
+      logLine({ stage: 'scan', doc: `${o.total} files`,
+        msg: o.groups > 1 ? `${o.folder} · ${o.groups} subfolders (in series)` : o.folder,
+        ts: o.ts });
+      break;
+    case 'folder_start':
+      // a subfolder began; show which one alongside per-file progress (only when
+      // there's more than one, so a flat folder pick reads exactly as before)
+      folderInfo = o.groups > 1 ? `folder ${o.index}/${o.groups} · ${o.folder_name}` : '';
+      if (o.groups > 1) logLine({ stage: 'folder', doc: o.folder_name,
+        msg: `start — ${o.count} PDF(s)  (${o.index}/${o.groups})`, ts: o.ts });
+      break;
+    case 'folder_done':
+      if (o.groups > 1) logLine({ stage: 'folder', doc: o.folder_name,
+        msg: `done  (${o.index}/${o.groups})`, cls: 'ok', ts: o.ts });
       break;
     case 'doc_start': {
       const pos = o.index ? `${o.index} / ${o.total}` : (o.total ? `· / ${o.total}` : '');
-      $('progressLabel').textContent = `${pos}${pos ? ' — ' : ''}${o.doc}`;
+      const prefix = folderInfo ? `${folderInfo} — ` : '';
+      $('progressLabel').textContent = `${prefix}${pos}${pos ? ' — ' : ''}${o.doc}`;
       logLine({ stage: 'start', doc: o.doc, msg: '', ts: o.ts });
       break;
     }
