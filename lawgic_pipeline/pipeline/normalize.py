@@ -116,10 +116,18 @@ _AZURE_COMMENT = re.compile(r"<!--\s*Page(?:Number|Header|Footer|Break)[^>]*-->"
                             re.IGNORECASE)
 # Barcode line, e.g. *01000231402240020*
 _BARCODE = re.compile(r"^\s*\*\d{6,}\*\s*$", re.MULTILINE)
-# Εθνικό Τυπογραφείο trailer: everything from the printing-house anchor onward.
+# Εθνικό Τυπογραφείο trailer: the printing-house footer credit that closes a
+# gazette, cut from its anchor to EOF. Case-SENSITIVE all-caps on purpose — a
+# provision BODY routinely names the National Printing House or "public service"
+# in running prose ("...ανατίθεται στο Εθνικό Τυπογραφείο...", "...εξυπηρέτηση
+# κοινού...") and must NOT be truncated there. The real footer is always typeset
+# in capitals (ΑΠΟ ΤΟ ΕΘΝΙΚΟ ΤΥΠΟΓΡΑΦΕΙΟ / ΚΑΠΟΔΙΣΤΡΙΟΥ 34 / ΕΞΥΠΗΡΕΤΗΣΗ ΚΟΙΝΟΥ),
+# which body prose is not. (A loose IGNORECASE "Το Εθνικό Τυπογραφείο" once matched
+# a body mention on page 8 of ν.4368/2016 — whose articles regulate the Printing
+# House — and `.*\Z` swallowed articles 8→101, i.e. 84% of the law.)
 _TRAILER = re.compile(
-    r"(Καποδιστρίου\s+34|ΕΞΥΠΗΡΕΤΗΣΗ\s+ΚΟΙΝΟΥ|Το\s+Εθνικό\s+Τυπογραφείο)"
-    r".*\Z", re.IGNORECASE | re.DOTALL)
+    r"(ΚΑΠΟΔΙΣΤΡΙΟΥ\s+34|ΕΞΥΠΗΡΕΤΗΣΗ\s+ΚΟΙΝΟΥ|ΑΠΟ\s+ΤΟ\s+ΕΘΝΙΚΟ\s+ΤΥΠΟΓΡΑΦΕΙΟ)"
+    r".*\Z", re.DOTALL)
 # Promulgation + signature trailer of a νόμος: the closing "Παραγγέλλομε τη
 # δημοσίευση ... ως νόμου του Κράτους", the President + ministers' signatures, the
 # "Θεωρήθηκε ... Μεγάλη Σφραγίδα" attestation and the all-caps ΕΘΝΙΚΟ ΤΥΠΟΓΡΑΦΕΙΟ

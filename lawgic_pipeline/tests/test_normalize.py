@@ -88,6 +88,30 @@ def test_strip_barcode_and_trailer():
     assert "ΕΞΥΠΗΡΕΤΗΣΗ" not in out and "*0100" not in out
 
 
+def test_body_mention_of_printing_house_not_truncated():
+    """A provision BODY may name the National Printing House or 'public service' in
+    running (title/lower-case) prose; that must NOT trigger the all-caps printing-house
+    trailer and delete the rest of the law. Regression: a loose IGNORECASE anchor once
+    cut ν.4368/2016 at an art-8 body mention, losing 84% of the text (arts 8→101)."""
+    body = ("Άρθρο 8 Συμβάσεις\nΟι συμβάσεις που έχουν συναφθεί από το Εθνικό "
+            "Τυπογραφείο θεωρούνται έγκυρες.\n"
+            "Άρθρο 90 Τελικές διατάξεις\nΗ εξυπηρέτηση κοινού στην Καποδιστρίου 34 "
+            "συνεχίζεται.\nΤέλος.")
+    out = strip_furniture(body)
+    assert "Άρθρο 90" in out and "Τέλος" in out       # nothing truncated
+    assert "Εθνικό Τυπογραφείο" in out                # body mention preserved
+
+
+def test_real_allcaps_printing_house_footer_stripped():
+    """The genuine footer is set in capitals (ΑΠΟ ΤΟ ΕΘΝΙΚΟ ΤΥΠΟΓΡΑΦΕΙΟ / ΚΑΠΟΔΙΣΤΡΙΟΥ
+    34) and must still be cut from its anchor to EOF."""
+    body = ("Άρθρο 1 Σκοπός.\nΚείμενο της διάταξης.\n"
+            "ΑΠΟ ΤΟ ΕΘΝΙΚΟ ΤΥΠΟΓΡΑΦΕΙΟ\nΚΑΠΟΔΙΣΤΡΙΟΥ 34 * ΑΘΗΝΑ 104 32 * ΤΗΛ. 210 5279000")
+    out = strip_furniture(body)
+    assert "Άρθρο 1 Σκοπός." in out
+    assert "ΤΥΠΟΓΡΑΦΕΙΟ" not in out and "ΚΑΠΟΔΙΣΤΡΙΟΥ" not in out
+
+
 
 def test_strip_header_fragments_from_dewrapped_columns():
     """Two-column dewrapping splits the running header into fragments the full

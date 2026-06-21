@@ -52,14 +52,59 @@ def _group_lines(words: list[dict], ytol: float = 3.0) -> list[str]:
     return lines
 
 
+def _detect_gutter(words: list[dict], width: float) -> float:
+    """Find the real two-column gutter empirically.
+
+    FEK columns are frequently OFFSET from the page centre (the right column's left
+    margin sits a few points off width/2). A fixed width/2 split then makes every
+    right-column word 'cross' the assumed gutter, inflating the crossing ratio so the
+    clean two-column path is rejected and the columns get line-interleaved — welding a
+    header into its neighbour's text ("Άρθρο 12 <bled-in column text>"). Instead, test
+    each column-start (word left-edge) in the central band as a candidate gutter and
+    return the one crossed by the FEWEST words (ties -> nearest the centre); the right
+    column's left margin, where its lines all begin, wins. Falls back to width/2.
+    """
+    if not words:
+        return width / 2.0
+    mid = width / 2.0
+    lo, hi = width * 0.35, width * 0.65
+    cands = sorted({w["x0"] for w in words if lo <= w["x0"] <= hi})
+    best_g = mid
+    best_c = sum(1 for w in words if w["x0"] < mid < w["x1"])
+    for g in cands:
+        c = sum(1 for w in words if w["x0"] < g < w["x1"])
+        if c < best_c or (c == best_c and abs(g - mid) < abs(best_g - mid)):
+            best_g, best_c = g, c
+    # Only trust an off-centre gutter when it yields a real two-column split: CLEAN
+    # (few words cross it — 0.04 mirrors _column_text's acceptance threshold) AND
+    # BALANCED (both columns hold a substantial share of the words). On irregular /
+    # bilingual / single-column pages even the best candidate is either crossed by many
+    # words or sits near the margin (a lopsided split) — there is no real gutter, so
+    # keep width/2 and let the downstream crossing-ratio test classify the page;
+    # moving the split off-centre there would mis-band the page and weld lines.
+    n = len(words)
+    left = sum(1 for w in words if w["x1"] <= best_g)
+    right = sum(1 for w in words if w["x0"] >= best_g)
+    # A real gutter is the right column's LEFT MARGIN: its lines all begin there, so a
+    # substantial share of words START at best_g. A spurious low-crossing x on an
+    # irregular / bilingual page lacks this — only a stray word or two starts there
+    # (treaty annex pages: 0-2% vs a true two-column body's ~5%+).
+    margin = sum(1 for w in words if abs(w["x0"] - best_g) <= 2.0)
+    if (best_c <= 0.04 * n and min(left, right) >= 0.3 * n
+            and margin >= 0.04 * n):
+        return best_g
+    return mid
+
+
 def _column_text(page) -> str:
     """Reading-order text with two-column reconstruction when a gutter exists.
 
     FEK body pages are symmetric two-column; pdfplumber's extract_text() reads
-    line-by-line and so interleaves the columns. We detect a central gutter (a
-    vertical band that almost no word crosses) and, when found, emit the whole
-    left column then the whole right column. Full-width lines (mastheads, titles,
-    tables) keep ~all words crossing the gutter, so such pages stay single-flow.
+    line-by-line and so interleaves the columns. We detect the gutter (the vertical
+    band that almost no word crosses — found empirically, since columns are often
+    offset from centre) and, when found, emit the whole left column then the whole
+    right column. Full-width lines (mastheads, titles, tables) keep ~all words crossing
+    the gutter, so such pages stay single-flow.
     """
     try:
         words = page.extract_words(use_text_flow=False)
@@ -67,7 +112,7 @@ def _column_text(page) -> str:
         return page.extract_text() or ""
     if not words:
         return page.extract_text() or ""
-    g = page.width / 2.0
+    g = _detect_gutter(words, page.width)
     crossing = sum(1 for w in words if w["x0"] < g < w["x1"])
     left = [w for w in words if w["x1"] <= g]
     right = [w for w in words if w["x0"] >= g]
