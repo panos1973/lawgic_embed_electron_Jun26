@@ -99,6 +99,22 @@ def _emit_run_config():
         pass
 
 
+def _group_by_subfolder(root: str, pdfs: list) -> list:
+    """Bucket PDF paths by their TOP-LEVEL subfolder under `root`, so a folder of
+    N subfolders ingests one subfolder fully before the next starts.
+
+    Returns ``[(label, [paths]), ...]`` in folder-name order, each group keeping
+    the order it was given. PDFs sitting directly in `root` form a leading
+    "(root)" group; a PDF nested deeper (root/sub/2024/x.pdf) rolls up to its
+    top-level subfolder ("sub"). Pure + offline so it can be unit-tested."""
+    groups: "dict[str, list]" = {}
+    for p in pdfs:
+        parts = os.path.relpath(p, root).split(os.sep)
+        key = parts[0] if len(parts) > 1 else "."        # top-level subfolder, or root
+        groups.setdefault(key, []).append(p)
+    return [("(root)" if k == "." else k, groups[k]) for k in sorted(groups)]
+
+
 def cmd_ingest(folder: str):
     import weaviate_io as wio
     import orchestrator
@@ -143,20 +159,26 @@ def cmd_ingest(folder: str):
     _warn_if_no_llm_key()
     _emit_run_config()
     try:
-        pdfs = sorted(glob.glob(os.path.join(folder, "**", "*.pdf"), recursive=True))
-        # Oldest-first by filename keeps a stable order; true chronological ordering
-        # is enforced later by the serial consolidation pass, which is order-safe.
-        total = len(pdfs)
-        emit({"type": "scan", "folder": folder, "total": total})
+        # Recursive scan: every PDF anywhere under the chosen folder (any depth) is
+        # found, so pointing the app at a PARENT of many subfolders ingests them all.
+        all_pdfs = sorted(glob.glob(os.path.join(folder, "**", "*.pdf"), recursive=True))
+        # ...then bucket by top-level subfolder so the subfolders run STRICTLY IN
+        # SERIES: every law in one subfolder finishes before the next subfolder is
+        # touched. Oldest-first by filename inside each group is a stable order;
+        # chronological ordering is enforced later by the order-safe consolidation.
+        groups = _group_by_subfolder(folder, all_pdfs)
+        total = len(all_pdfs)
+        emit({"type": "scan", "folder": folder, "total": total, "groups": len(groups)})
         if not JSON:
-            print(f"Found {total} PDFs in {folder}")
+            print(f"Found {total} PDFs in {folder} across {len(groups)} folder(s)")
 
-        # PHASE 1 — parallel per-document ingest. Each law is processed start-to-
-        # finish by ONE worker (its chunks never split across workers), so within
-        # a law nothing is missed and identity/linkage is intact. Concurrency is
-        # bounded; the rate limiter throttles the API fan-out. Single doc -> 1
-        # worker (no thread overhead), preserving the simple serial path.
-        workers = max(1, int(getattr(config, "CONCURRENCY", 4))) if total > 1 else 1
+        # PHASE 1 — per-document ingest, ONE SUBFOLDER AT A TIME. Each law is
+        # processed start-to-finish by ONE worker (its chunks never split across
+        # workers), so within a law nothing is missed and identity/linkage is
+        # intact. Within a subfolder files still run in parallel up to CONCURRENCY
+        # (the rate limiter throttles the API fan-out); set CONCURRENCY=1 for a
+        # fully one-at-a-time run. Single doc -> 1 worker (no thread overhead).
+        base_workers = max(1, int(getattr(config, "CONCURRENCY", 4)))
         done_n = [0]
         stop = threading.Event()       # set on the first fatal -> no new files start
         fatal = {}                     # the first fatal's provider/stage/doc/detail
@@ -188,21 +210,35 @@ def cmd_ingest(folder: str):
                   "index": done_n[0], "total": total})
             return status
 
-        if workers == 1:
-            for path in pdfs:
-                if stop.is_set():
-                    break
-                _one(path)
-        else:
-            emit({"type": "stage", "doc": "", "stage": "parallel",
-                  "msg": f"processing {total} docs, {workers} workers"})
+        def _run_group(paths):
+            """Ingest one subfolder's PDFs, then return. Parallel within the group
+            (bounded by CONCURRENCY); serial for a single file or CONCURRENCY=1."""
+            workers = base_workers if len(paths) > 1 else 1
+            if workers == 1:
+                for path in paths:
+                    if stop.is_set():
+                        break
+                    _one(path)
+                return
             pool = ThreadPoolExecutor(max_workers=workers)
-            futures = [pool.submit(_one, p) for p in pdfs]
+            futures = [pool.submit(_one, p) for p in paths]
             for _f in as_completed(futures):
                 if stop.is_set():
                     break                                # stop waiting on the rest
             # cancel not-yet-started files; let the few in-flight ones wind down
             pool.shutdown(wait=True, cancel_futures=True)
+
+        for gi, (label, paths) in enumerate(groups, 1):
+            if stop.is_set():
+                break                                    # a fatal in an earlier subfolder
+            emit({"type": "folder_start", "folder_name": label, "index": gi,
+                  "groups": len(groups), "count": len(paths)})
+            if not JSON:
+                print(f"\n[folder {gi}/{len(groups)}] {label} — {len(paths)} PDF(s)")
+            _run_group(paths)
+            if not stop.is_set():
+                emit({"type": "folder_done", "folder_name": label, "index": gi,
+                      "groups": len(groups), "count": len(paths)})
 
         if fatal:
             # Credential/endpoint failure — STOP (do not consolidate). The operator
