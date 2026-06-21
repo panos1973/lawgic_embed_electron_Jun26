@@ -427,6 +427,17 @@ def _target_article(target_id: str) -> str:
     return m.group(1) if m else ""
 
 
+def _article_level_id(target_id: str) -> str:
+    """Collapse a sub-article target id to its article-level id so the timeline can
+    match the embedded provision (provisions are stored at article grain):
+        'ν.4368/2016#αρ.90.παρ.7.περ.γ' -> 'ν.4368/2016#αρ.90'
+    An already article-level id ('…#αρ.50') is returned unchanged; a target with no
+    article anchor (a bare-law reference) is returned as-is."""
+    head = target_id.split("#", 1)[0]
+    art_no = _target_article(target_id)
+    return f"{head}#αρ.{art_no}" if art_no else target_id
+
+
 def load_amendments(client, ops: list[AmendmentOp], source_law: Law = None,
                     tenant: str = None):
     tenant = tenant or (source_law.jurisdiction if source_law else None) \
@@ -583,7 +594,25 @@ def assemble_article_timeline(client, tenant: str = None) -> dict:
     chunk_text/language/text_stemmed; the richer normalize fold is left to a future
     pass — noted in docs §5A.)
 
-    Returns {"articles": a, "versions_written": v, "pending": p}.
+    Grain-aware fold (provisions are embedded at ARTICLE grain). Edges are grouped
+    by the article-level id of their target, then per article:
+      * a WHOLE-article edit (target IS the article, e.g. '…#αρ.15') carries the
+        article's full replacement text and drives the version timeline — close the
+        previous window, write a re-embedded new version, repeal as terminal.
+      * a SUB-article edit (a paragraph/subpoint, '…#αρ.15.παρ.2') is LINKED to the
+        article (surfaced at query time via its amendment edge) but never rewrites
+        the article body — that would drop the untouched paragraphs. Counted in
+        `linked_subedits`.
+      * if the target law is not ingested (no document node) the edges stay
+        `pending`; we do NOT seed a stub provision node from amendment text (that
+        previously polluted retrieval with partial, context-poor paragraph chunks).
+        A text-bearing whole-article 'adds' into an *ingested* law still seeds the
+        newly-created article.
+
+    Order-independent: pending edges resolve on a later run once the target lands.
+    Idempotent: per-version UUIDs are deterministic; unchanged versions are skipped.
+
+    Returns {"articles": a, "versions_written": v, "pending": p, "linked_subedits": l}.
     """
     from voyage_embed import embed_law_chunks
 
@@ -593,7 +622,10 @@ def assemble_article_timeline(client, tenant: str = None) -> dict:
     art = client.collections.use(config.GRAPH_ARTICLE).with_tenant(tenant)
     doc = client.collections.use(config.GRAPH_DOCUMENT).with_tenant(tenant)
 
-    by_target: dict[str, list] = {}
+    # Group every dated edge under the ARTICLE-level id of its target so a
+    # sub-article edit folds onto / links to the same embedded article as a
+    # whole-article one.
+    by_article: dict[str, list] = {}
     for obj in amd.iterator():
         p = dict(obj.properties)
         # Weaviate returns DATE props as datetime; normalize to the write-time
@@ -601,72 +633,79 @@ def assemble_article_timeline(client, tenant: str = None) -> dict:
         p["effective_date"] = _vf_str(p.get("effective_date"))
         tcid = (p.get("target_canonical_id") or "").strip()
         if tcid and p.get("effective_date"):
-            by_target.setdefault(tcid, []).append(p)
+            by_article.setdefault(_article_level_id(tcid), []).append(p)
 
-    articles = versions = pending = 0
-    for tcid, edges in by_target.items():
+    articles = versions = pending = linked = 0
+    for aid, edges in by_article.items():
         edges.sort(key=lambda e: ((e.get("effective_date") or ""),
                                   (e.get("sub_edit_ordinal") or ""),
                                   (e.get("source_law_number") or "")))
-        instrument_id = tcid.split("#", 1)[0]
+        instrument_id = aid.split("#", 1)[0]
         docobj = doc.query.fetch_object_by_id(generate_uuid5("doc:" + instrument_id))
-        base_vf = _vf_str(docobj.properties.get("publication_date")) if docobj else None
-        base_flat = (flat.query.fetch_object_by_id(_flat_version_uuid(tcid, base_vf))
-                     if base_vf else None)
-        base_art = (art.query.fetch_object_by_id(_art_version_uuid(tcid, base_vf))
-                    if base_vf else None)
-
-        # Only a text-bearing 'adds' can SEED a brand-new provision node. An empty
-        # 'adds' (e.g. a salvaged structure-only edge whose replacement text was too
-        # large to capture) must not materialize an empty node — keep its edge in the
-        # graph but leave the provision pending until real text exists.
-        adds = [e for e in edges if e.get("action") == "adds"
-                and (e.get("new_text") or "").strip()]
-        if base_art is None and not adds:
-            pending += len(edges)              # target law not ingested yet
+        if docobj is None:
+            # Target law not ingested: park the edges, seed nothing (no stub node).
+            pending += len(edges)
             continue
-        articles += 1
+        base_vf = _vf_str(docobj.properties.get("publication_date"))
+        base_flat = flat.query.fetch_object_by_id(_flat_version_uuid(aid, base_vf))
+        base_art = art.query.fetch_object_by_id(_art_version_uuid(aid, base_vf))
+
+        # Whole-article edits target the article id exactly; everything deeper is a
+        # sub-article edit that only links to the article.
+        whole = [e for e in edges if (e.get("target_canonical_id") or "").strip() == aid]
+        sub = [e for e in edges if (e.get("target_canonical_id") or "").strip() != aid]
 
         flat_base = (dict(base_flat.properties) if base_flat else
-                     {"canonical_id": tcid, "law_number": _target_law_number(tcid),
-                      "article_number": _target_article(tcid)})
+                     {"canonical_id": aid, "law_number": _target_law_number(aid),
+                      "article_number": _target_article(aid)})
         art_base = (dict(base_art.properties) if base_art else
-                    {"canonical_id": tcid, "document_law_number": _target_law_number(tcid),
-                     "article_number": _target_article(tcid)})
+                    {"canonical_id": aid, "document_law_number": _target_law_number(aid),
+                     "article_number": _target_article(aid)})
 
         if base_art is not None:
             cur_text = base_art.properties.get("chunk_text") or ""
             cur_vf = base_vf
             version = int(base_art.properties.get("version") or 1)
-        else:                                  # 'adds' creates the article -> seed v1
-            seed = adds[0]
-            edges = [e for e in edges if e is not seed]
+        else:
+            # Article not embedded. Only a text-bearing WHOLE-article 'adds' may seed
+            # a brand-new article in this (ingested) law; a sub-article edit or a
+            # replace of a missing article stays pending until the text exists.
+            seed = next((e for e in whole if e.get("action") == "adds"
+                         and (e.get("new_text") or "").strip()), None)
+            if seed is None:
+                pending += len(edges)
+                continue
+            whole = [e for e in whole if e is not seed]
             cur_text, cur_vf, version = (_strip_amend_quotes(seed.get("new_text") or ""),
                                          seed.get("effective_date"), 1)
-            versions += _write_version_pair(flat, art, flat_base, art_base, tcid,
+            versions += _write_version_pair(flat, art, flat_base, art_base, aid,
                                             cur_text, cur_vf, version, "in_force",
                                             True, embed_law_chunks)
 
-        for e in edges:
+        articles += 1
+        linked += len(sub)          # sub-article edits link to the article (no node)
+
+        for e in whole:
             new_vf = e.get("effective_date")
             new_text = _apply_edit(e, cur_text)
             if new_vf == cur_vf:               # same-date edit -> fold, no new window
                 cur_text = new_text
                 continue
             # close the previous window (no re-embed; metadata only)
-            _write_version_pair(flat, art, flat_base, art_base, tcid, cur_text,
+            _write_version_pair(flat, art, flat_base, art_base, aid, cur_text,
                                 cur_vf, version, flat_base.get("legal_force_status")
                                 or "in_force", False, embed_law_chunks, valid_to=new_vf)
             version += 1
             status = "repealed" if e.get("action") == "repeals" else "amended"
-            versions += _write_version_pair(flat, art, flat_base, art_base, tcid,
+            versions += _write_version_pair(flat, art, flat_base, art_base, aid,
                                             new_text, new_vf, version, status, True,
                                             embed_law_chunks)
             cur_text, cur_vf = new_text, new_vf
             if e.get("action") == "repeals":
                 break
 
-    return {"articles": articles, "versions_written": versions, "pending": pending}
+    return {"articles": articles, "versions_written": versions,
+            "pending": pending, "linked_subedits": linked}
 
 
 # Back-compat alias: the orchestrator/CLI still call consolidate_cross_law.

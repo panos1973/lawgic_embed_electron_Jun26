@@ -550,6 +550,96 @@ def test_timeline_repeal_marks_terminal(monkeypatch):
     assert rep["legal_force_status"] == "repealed"
 
 
+def test_subarticle_edit_links_to_article_no_stub(monkeypatch):
+    # A paragraph-level amendment ('…#αρ.15.παρ.2') folds onto the embedded article
+    # 15 as a LINK — it does not rewrite the article body and does not materialize a
+    # paragraph-grained node (the stub pollution we are removing).
+    import voyage_embed as ve
+    monkeypatch.setattr(ve, "embed_law_chunks", lambda ch: [[0.0] * 4 for _ in ch])
+    c = _VClient()
+    base = _base_law()
+    wio.load_document(c, base)
+    wio.load_law(c, base, [[0.0] * 4])
+    wio.load_amendments(c, [AmendmentOp(
+        op="adds", target_id="ν.4412/2016#αρ.15.παρ.2", scope="paragraph",
+        new_text="μια νέα παράγραφος", effective_date="2024-04-01",
+        sub_edit_ordinal="1")], source_law=_amending_law("2024-04-01"))
+
+    r = wio.assemble_article_timeline(c, tenant="gr")
+    assert r["articles"] == 1 and r["versions_written"] == 0
+    assert r["linked_subedits"] == 1 and r["pending"] == 0
+    # no paragraph-grained stub node was created in either collection
+    sub_uuid = wio._art_version_uuid("ν.4412/2016#αρ.15.παρ.2", "2024-04-01T00:00:00Z")
+    assert sub_uuid not in c.store.get("Jun2026LawArticle", {})
+    sub_flat = wio._flat_version_uuid("ν.4412/2016#αρ.15.παρ.2", "2024-04-01T00:00:00Z")
+    assert sub_flat not in c.store.get("Jun2026GRLegaDocs", {})
+
+
+def test_subarticle_edit_to_absent_law_pends_no_stub(monkeypatch):
+    # The key anti-pollution regression: a text-bearing sub-article 'adds' to a law
+    # that is NOT ingested must stay pending and seed NOTHING (the old code wrote a
+    # paragraph-grained stub provision from the amendment text).
+    import voyage_embed as ve
+    monkeypatch.setattr(ve, "embed_law_chunks", lambda ch: [[0.0] * 4 for _ in ch])
+    c = _VClient()
+    wio.load_amendments(c, [AmendmentOp(
+        op="adds", target_id="ν.7777/2010#αρ.5.παρ.1", scope="paragraph",
+        new_text="κείμενο τροποποίησης", effective_date="2024-04-01",
+        sub_edit_ordinal="1")], source_law=_amending_law("2024-04-01"))
+
+    r = wio.assemble_article_timeline(c, tenant="gr")
+    assert r["pending"] == 1 and r["articles"] == 0 and r["versions_written"] == 0
+    assert not c.store.get("Jun2026LawArticle")     # no stub article node at all
+    assert not c.store.get("Jun2026GRLegaDocs")     # no stub flat node at all
+
+
+def test_whole_article_replace_with_subedit_sibling(monkeypatch):
+    # A whole-article replace drives a real v2; a same-article paragraph edit rides
+    # along as a link. Demonstrates the cross-law fold landing on a present article.
+    import voyage_embed as ve
+    monkeypatch.setattr(ve, "embed_law_chunks", lambda ch: [[0.0] * 4 for _ in ch])
+    c = _VClient()
+    base = _base_law()
+    wio.load_document(c, base)
+    wio.load_law(c, base, [[0.0] * 4])
+    wio.load_amendments(c, [
+        AmendmentOp(op="replaces", target_id="ν.4412/2016#αρ.15", scope="article",
+                    new_text="ολόκληρο νέο άρθρο", effective_date="2024-04-01",
+                    sub_edit_ordinal="1"),
+        AmendmentOp(op="adds", target_id="ν.4412/2016#αρ.15.παρ.4", scope="paragraph",
+                    new_text="συμπλήρωση", effective_date="2024-04-01",
+                    sub_edit_ordinal="2"),
+    ], source_law=_amending_law("2024-04-01"))
+
+    r = wio.assemble_article_timeline(c, tenant="gr")
+    assert r["articles"] == 1 and r["versions_written"] == 1
+    assert r["linked_subedits"] == 1 and r["pending"] == 0
+    v2 = c.store["Jun2026LawArticle"][
+        wio._art_version_uuid("ν.4412/2016#αρ.15", "2024-04-01T00:00:00Z")]
+    assert v2["chunk_text"] == "ολόκληρο νέο άρθρο" and v2["is_current"] is True
+
+
+def test_whole_article_add_seeds_new_article_in_ingested_law(monkeypatch):
+    # A whole-article 'adds' that introduces a brand-new article into an INGESTED law
+    # still legitimately seeds that article (grain matches; the law is present).
+    import voyage_embed as ve
+    monkeypatch.setattr(ve, "embed_law_chunks", lambda ch: [[0.0] * 4 for _ in ch])
+    c = _VClient()
+    base = _base_law()
+    wio.load_document(c, base)
+    wio.load_law(c, base, [[0.0] * 4])
+    wio.load_amendments(c, [AmendmentOp(
+        op="adds", target_id="ν.4412/2016#αρ.15Α", scope="article",
+        new_text="νέο άρθρο 15Α", effective_date="2024-04-01",
+        sub_edit_ordinal="1")], source_law=_amending_law("2024-04-01"))
+
+    r = wio.assemble_article_timeline(c, tenant="gr")
+    assert r["articles"] == 1 and r["versions_written"] == 1 and r["pending"] == 0
+    seeded = c.store["Jun2026LawArticle"][
+        wio._art_version_uuid("ν.4412/2016#αρ.15Α", "2024-04-01T00:00:00Z")]
+    assert seeded["chunk_text"] == "νέο άρθρο 15Α" and seeded["is_current"] is True
+
+
 # --- Browse inspectors: list_laws + fetch_law_objects -----------------------
 class _InspectObj:
     def __init__(self, props, uuid): self.properties = props; self.uuid = uuid
