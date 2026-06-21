@@ -173,14 +173,26 @@ def _split_document_body(body: str, target: int = _DOC_CHUNK_CHARS) -> list[str]
 _ENACTED_BODY_FRACTION = 0.6
 _ENACTED_MIN_ARTICLES = 5
 _ARTICLE_HEADER_HINT = re.compile(r"(?m)^[^\S\r\n]*#{0,6}[^\S\r\n]*Άρθρο[^\S\r\n]+\d")
+# A dangling « (its closing » dropped by two-column / OCR extraction) whose masked
+# tail would exceed this is a mid-document extraction artifact, NOT a real unclosed
+# insertion: closing it to EOF would hide every real article after it. Above this
+# size we instead close it at the next line-start article header (see _quote_forest).
+# Comfortably larger than a single inserted provision, far smaller than a half-doc
+# over-mask (ν.4368/2016 lost arts 30-101 — a 119k-char dangling span — this way).
+_DANGLING_QUOTE_MAX = 12_000
 
 
 def _quote_forest(text: str) -> list[dict]:
     """Parse balanced « » into a nesting forest of {start, end, children} nodes.
 
-    An unclosed « (truncated/missing close) is closed at end of text, so a dangling
-    quote can't let inserted headers leak back in as real articles.
+    An unclosed « (truncated/missing close) is normally closed at end of text, so a
+    dangling quote can't let inserted headers leak back in as real articles. But when
+    two-column/OCR extraction DROPS a closing », that EOF close would mask the whole
+    rest of the act — hiding every real article after it. So an over-long dangling
+    span (> _DANGLING_QUOTE_MAX) is closed at the next line-start article header
+    instead; a short one still masks to end (the close really was the last thing lost).
     """
+    import bisect
     roots: list[dict] = []
     stack: list[dict] = []
     for i, ch in enumerate(text):
@@ -190,10 +202,17 @@ def _quote_forest(text: str) -> list[dict]:
             node = stack.pop()
             node["end"] = i
             (stack[-1]["children"] if stack else roots).append(node)
-    while stack:                                   # unclosed -> close to end
-        node = stack.pop()
-        node["end"] = len(text)
-        (stack[-1]["children"] if stack else roots).append(node)
+    if stack:                                      # unclosed « -> a » was dropped
+        headers = [m.start() for m in _ARTICLE_HEADER_HINT.finditer(text)]
+        while stack:
+            node = stack.pop()
+            end = len(text)
+            if end - node["start"] > _DANGLING_QUOTE_MAX:
+                j = bisect.bisect_right(headers, node["start"])
+                if j < len(headers):               # bound the span at the next header
+                    end = headers[j]
+            node["end"] = end
+            (stack[-1]["children"] if stack else roots).append(node)
     return roots
 
 

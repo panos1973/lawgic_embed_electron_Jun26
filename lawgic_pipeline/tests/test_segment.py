@@ -330,6 +330,21 @@ def test_unclosed_guillemet_masks_to_end():
     assert [p.article_no for p in law.provisions] == ["1"]   # 5,6 stay masked
 
 
+def test_long_dangling_guillemet_bounded_at_next_article():
+    """When two-column/OCR extraction DROPS a closing », the dangling « must not mask
+    the whole rest of the act to EOF — that hid arts 30-101 of ν.4368/2016. An
+    over-long dangling span is bounded at the next real (line-start) article header, so
+    the real articles after the dropped » survive; the inserted header stays masked."""
+    law = Law(instrument_id="ν.2/2024", instrument_key="x", instrument_type=TYPE_NOMOS)
+    filler = "Κείμενο της προστιθέμενης διάταξης με αρκετές λέξεις. " * 400  # > cap
+    txt = ("Άρθρο 1\nΑρχή.\nΤο άρθρο 5 αντικαθίσταται ως εξής:\n«Άρθρο 5\n" + filler +
+           "\nΆρθρο 90\nΤελικό\nΚείμενο του ενενηκοστού.")
+    law = segment(txt, law)
+    nums = [p.article_no for p in law.provisions if p.chunk_type == "article"]
+    assert "1" in nums and "90" in nums      # real articles survive the dropped »
+    assert "5" not in nums                    # the inserted header stays masked
+
+
 def test_markdown_article_heading_anchor_no_bleed():
     """Azure DI emits '# Άρθρο 42 Τίτλος...' on one line; it must start a new
     article so the previous one does not swallow it (art.41/42 bleed)."""
