@@ -29,6 +29,24 @@ def _fake(payload):
     return lambda system, user, want_json=True, max_tokens=1500: json.dumps(payload)
 
 
+def test_annex_chunks_are_not_mined():
+    """An annex chunk is verbatim ratified text (e.g. a concession contract); its
+    internal 'Article X αντικαθίσταται' lines must NOT be mined as amendments THIS law
+    makes — that produced 53 false self-edges from ν.4368/2016's motorway annex. The
+    LLM must not even be invoked for an annex provision."""
+    law = Law(instrument_id="ν.4368/2016", instrument_key="N",
+              instrument_type=TYPE_NOMOS, title="t", fek_date="2016-02-21")
+    law.provisions.append(Provision(
+        canonical_id="ν.4368/2016#παραρτ.94.τμ.1", instrument_id="ν.4368/2016",
+        instrument_key="N", instrument_type=TYPE_NOMOS, article_no="παραρτ.94.τμ.1",
+        chunk_type="annex",
+        text_in_force="Το άρθρο 3.1 της Σύμβασης αντικαθίσταται ως εξής: «νέο κείμενο»."))
+    called = []
+    extract_amendments_llm(law, complete=lambda *a, **k: called.append(1) or "{}")
+    assert law.amendments == []          # nothing mined from the annex
+    assert not called                    # the LLM was never invoked for it
+
+
 def test_replaces_with_new_text_and_nested_scope():
     law = _law("Η περ. α΄ της παρ. 1 του άρθρου 60 του ν. 4172/2013 "
                "αντικαθίσταται ως εξής: «Ειδικά, η δήλωση υποβάλλεται…»")

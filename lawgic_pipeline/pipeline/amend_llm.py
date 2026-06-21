@@ -170,6 +170,14 @@ def extract_amendments_llm(law: Law,
     seen: dict[str, int] = {}                       # target_id -> next ordinal
 
     for p in law.provisions:
+        # Annex chunks are verbatim RATIFIED/ENACTED text (a treaty, a codified body,
+        # a ratified concession contract). Their internal "Article X is replaced …" /
+        # «… αντικαθίσταται …» lines are the instrument's OWN amendments, not amendments
+        # this Greek law makes — mining them yields self-targeting false edges that
+        # pollute the graph (ν.4368/2016's motorway-concession annex produced 53).
+        # Mirror the deterministic extractor's skip.
+        if p.chunk_type == "annex":
+            continue
         text = p.text_in_force or ""
         if not any(stem in text for stem in _AMEND_STEMS):
             continue                                # cheap gate: no verb, skip
