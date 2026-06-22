@@ -104,6 +104,13 @@ GRAPH_DELEGATION = "Jun2026Delegation"
 # --- Local state DB ---
 STATE_DB = os.environ.get("STATE_DB", "lawgic_state.db")
 
+# Azure DI output cache. OCR of a scanned page is keyed by the file's CONTENT hash +
+# DI model + page range, so the same pages of the same file always return the same
+# OCR (deterministic segmentation) and a re-embed pays NOTHING to re-OCR. Set empty
+# to disable. Defaults next to the state DB so it persists across runs.
+DI_CACHE_DIR = os.environ.get("DI_CACHE_DIR") or \
+    os.path.join(os.path.dirname(os.path.abspath(STATE_DB)), "di_cache")
+
 # --- Pipeline tuning ---
 def _int_env(name: str, default: int) -> int:
     try:
