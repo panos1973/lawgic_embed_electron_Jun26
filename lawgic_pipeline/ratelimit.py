@@ -94,7 +94,11 @@ def acquire(provider: str) -> None:
 
 
 _RETRYABLE = ("429", "rate limit", "too many requests", "timeout", "timed out",
-              "503", "502", "500", "overloaded", "temporarily")
+              "503", "502", "500", "overloaded", "temporarily",
+              # transient network drops — e.g. Azure DI "Connection aborted /
+              # RemoteDisconnected", which previously lost a scanned page's OCR.
+              "connection aborted", "connection reset", "remotedisconnected",
+              "remote end closed", "broken pipe", "connection error", "econnreset")
 
 
 def _is_retryable(err: Exception) -> bool:
