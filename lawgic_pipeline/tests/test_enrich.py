@@ -174,6 +174,52 @@ def _law_with_summaries(*summaries, title="Νόμος δοκιμής", cat="NOMO
     return law
 
 
+def _multi_law(n):
+    from models import Law, Provision, TYPE_NOMOS
+    law = Law(instrument_id="ν.1/2024", instrument_key="x", instrument_type=TYPE_NOMOS, title="t")
+    for i in range(1, n + 1):
+        law.provisions.append(Provision(
+            canonical_id=f"ν.1/2024#αρ.{i}", instrument_id="ν.1/2024", instrument_key="x",
+            instrument_type=TYPE_NOMOS, article_no=str(i), text_in_force=f"ΚΕΙΜΕΝΟ-{i}"))
+    return law
+
+
+def test_enrich_llm_parallel_maps_each_result_to_its_own_provision():
+    # Enrichment fans out across threads; each result must land on the provision whose
+    # text produced it (no cross-wiring), and every provision must be covered.
+    import json as _json
+    from pipeline import enrich as _enrich
+    law = _multi_law(12)                              # > LLM_CONCURRENCY (8) -> real fan-out
+
+    def echo(system, user, want_json=True, max_tokens=1024):
+        return _json.dumps({"summary": f"SUM:{user}", "keywords": [user],
+                            "eurovoc": [], "dkn": []})
+    orig = _enrich.llm.complete
+    _enrich.llm.complete = echo
+    try:
+        _enrich.enrich_llm(law)
+    finally:
+        _enrich.llm.complete = orig
+    for p in law.provisions:
+        assert p.chunk_summary == f"SUM:ΚΕΙΜΕΝΟ-{p.article_no}"   # right result -> right provision
+        assert p.keywords == [f"ΚΕΙΜΕΝΟ-{p.article_no}"]
+
+
+def test_enrich_llm_no_key_skips_without_crashing():
+    from pipeline import enrich as _enrich
+    law = _multi_law(5)
+
+    def no_key(*a, **k):
+        raise SystemExit("no LLM key")
+    orig = _enrich.llm.complete
+    _enrich.llm.complete = no_key
+    try:
+        _enrich.enrich_llm(law)                       # must not raise
+    finally:
+        _enrich.llm.complete = orig
+    assert all(p.chunk_summary == "" for p in law.provisions)   # all skipped, no partial
+
+
 def test_summarize_law_synthesizes_from_article_summaries():
     from pipeline.enrich import summarize_law
     law = _law_with_summaries("Το άρθρο 1 ορίζει τον σκοπό.", "Το άρθρο 2 συστήνει αρχή.")

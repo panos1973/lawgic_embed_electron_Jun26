@@ -124,6 +124,12 @@ def _float_env(name: str):
 # Per-document worker pool size (parallel laws within ONE app instance).
 CONCURRENCY = _int_env("CONCURRENCY", 4)
 
+# Per-PROVISION LLM fan-out inside ONE law (enrichment + amendment extraction). Those
+# stages make one LLM call per provision; a 150-article law ran them serially (~7s
+# each ≈ 18 min). The calls are independent and I/O-bound, so we issue up to this many
+# at once. The per-provider token-bucket rate limiter still caps the real request rate.
+LLM_CONCURRENCY = _int_env("LLM_CONCURRENCY", 8)
+
 # Optional per-process API request-rate caps (requests/minute). Unset -> the
 # conservative built-in defaults in ratelimit.py. The limiter is per-process and
 # does NOT coordinate across instances, so when running several app instances in

@@ -22,6 +22,7 @@ import hashlib
 import json
 import re
 
+import config
 import llm
 from greek_stem import stem_text
 from models import Law
@@ -375,52 +376,72 @@ _SYSTEM = (
 )
 
 
+def _enrich_one(p) -> dict | None:
+    """One provision's enrichment LLM call (with a single retry). Returns the parsed
+    dict, or None if it stayed unparseable. Raises SystemExit (no key) / a fatal error
+    (wrong key) to the caller. Retry once: a single truncated/garbled JSON used to
+    silently zero a provision's whole enrichment (the 1024-token budget can truncate a
+    long article's summary+keywords+EUROVOC+ΔΚΝ lists)."""
+    for _attempt in range(2):
+        try:
+            out = llm.complete(_SYSTEM, p.text_in_force, want_json=True, max_tokens=1024)
+            return json.loads(out)
+        except SystemExit:
+            raise                 # no API key configured
+        except Exception as e:
+            from errors import looks_fatal
+            if looks_fatal(e):
+                raise             # WRONG key/endpoint -> stop the run, don't swallow
+            continue              # bad JSON / transient error -> retry once
+    return None                   # one bad provision shouldn't fail the law
+
+
+def _apply_enrichment(p, data: dict) -> None:
+    p.chunk_summary = data.get("summary", p.chunk_summary)
+    kw = list(data.get("keywords") or [])
+    ev = data.get("eurovoc") or []
+    dkn = data.get("dkn") or []
+    # domain_dkn is a CONTROLLED vocabulary (the canonical Ραπτάρχης volumes). The LLM
+    # tends to also return free-form topical phrases ("Πρακτική άσκηση", "Χρεόγραφα");
+    # keep only entries that are real ΔΚΝ volumes and route the rest to keywords so the
+    # field stays clean and filterable.
+    canon = [d for d in dkn if d in DKN_VOLUMES]
+    noncanon = [d for d in dkn if d not in DKN_VOLUMES]
+    p.domain_eurovoc = list(dict.fromkeys(p.domain_eurovoc + ev))
+    p.domain_dkn = list(dict.fromkeys(p.domain_dkn + canon))
+    p.keywords = list(dict.fromkeys((kw or p.keywords) + noncanon)) or p.keywords
+
+
 def enrich_llm(law: Law, progress=None) -> Law:
     """Per-provision summary + keywords + taxonomy via the configured LLM.
     Skips silently if no provider key is set, so the pipeline never blocks on it.
 
-    Each provision is one LLM call, so for a long law this is the slowest stage.
-    `progress(msg)` (optional) is invoked per provision so the UI shows it is
-    alive instead of looking frozen between classify and embed."""
+    Each provision is one LLM call — the slowest stage for a long law. The calls are
+    independent and I/O-bound, so they fan out across config.LLM_CONCURRENCY workers
+    (the rate limiter still caps the real request rate); results are APPLIED in the main
+    thread so each provision is written exactly once with no races. `progress(msg)` is
+    invoked per completed provision so the UI shows it is alive."""
     total = len(law.provisions)
-    for i, p in enumerate(law.provisions, 1):
-        if progress:
-            progress(f"{law.instrument_id}: provision {i}/{total}")
-        # Retry once: a single truncated/garbled JSON (or a transient provider
-        # hiccup) used to silently zero a provision's whole enrichment. The budget
-        # is 1024 — long articles (e.g. a 13-member council) blew past 700 once the
-        # summary + keywords + EUROVOC + ΔΚΝ lists were emitted, truncating the JSON.
-        data = None
-        for _attempt in range(2):
+    if total == 0:
+        return law
+    conc = max(1, getattr(config, "LLM_CONCURRENCY", 8))
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    done = 0
+    with ThreadPoolExecutor(max_workers=min(conc, total)) as ex:
+        futs = {ex.submit(_enrich_one, p): p for p in law.provisions}
+        for fut in as_completed(futs):
             try:
-                out = llm.complete(_SYSTEM, p.text_in_force, want_json=True,
-                                   max_tokens=1024)
-                data = json.loads(out)
-                break
+                data = fut.result()
             except SystemExit:
                 if progress:
                     progress("no LLM key — skipping enrichment")
-                return law        # no API key configured — skip enrichment
-            except Exception as e:
-                from errors import looks_fatal
-                if looks_fatal(e):
-                    raise         # WRONG key/endpoint -> stop the run, don't swallow
-                continue          # bad JSON / transient error -> retry once
-        if data is None:
-            continue              # one bad provision shouldn't fail the law
-        p.chunk_summary = data.get("summary", p.chunk_summary)
-        kw = list(data.get("keywords") or [])
-        ev = data.get("eurovoc") or []
-        dkn = data.get("dkn") or []
-        # domain_dkn is a CONTROLLED vocabulary (the canonical Ραπτάρχης volumes).
-        # The LLM tends to also return free-form topical phrases ("Πρακτική
-        # άσκηση", "Χρεόγραφα"); keep only entries that are real ΔΚΝ volumes and
-        # route the rest to keywords so the field stays clean and filterable.
-        canon = [d for d in dkn if d in DKN_VOLUMES]
-        noncanon = [d for d in dkn if d not in DKN_VOLUMES]
-        p.domain_eurovoc = list(dict.fromkeys(p.domain_eurovoc + ev))
-        p.domain_dkn = list(dict.fromkeys(p.domain_dkn + canon))
-        p.keywords = list(dict.fromkeys((kw or p.keywords) + noncanon)) or p.keywords
+                return law        # no API key configured — skip enrichment entirely
+            done += 1
+            if progress:
+                progress(f"{law.instrument_id}: provision {done}/{total}")
+            if data is not None:
+                _apply_enrichment(futs[fut], data)
     return law
 
 

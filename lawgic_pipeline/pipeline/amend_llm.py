@@ -169,37 +169,50 @@ def extract_amendments_llm(law: Law,
     own_number = law.instrument_id.split(".")[-1]   # e.g. ν.5090/2024 -> 5090/2024
     seen: dict[str, int] = {}                       # target_id -> next ordinal
 
-    for p in law.provisions:
-        # Annex chunks are verbatim RATIFIED/ENACTED text (a treaty, a codified body,
-        # a ratified concession contract). Their internal "Article X is replaced …" /
-        # «… αντικαθίσταται …» lines are the instrument's OWN amendments, not amendments
-        # this Greek law makes — mining them yields self-targeting false edges that
-        # pollute the graph (ν.4368/2016's motorway-concession annex produced 53).
-        # Mirror the deterministic extractor's skip.
-        if p.chunk_type == "annex":
-            continue
-        text = p.text_in_force or ""
-        if not any(stem in text for stem in _AMEND_STEMS):
-            continue                                # cheap gate: no verb, skip
+    # Annex chunks are verbatim RATIFIED/ENACTED text (a treaty, a codified body, a
+    # ratified concession contract). Their internal "Article X is replaced …" / «…
+    # αντικαθίσταται …» lines are the instrument's OWN amendments, not amendments this
+    # Greek law makes — mining them yields self-targeting false edges that pollute the
+    # graph (ν.4368/2016's motorway-concession annex produced 53). Skip them, and the
+    # cheap no-verb gate, BEFORE spending an LLM call.
+    eligible = [p for p in law.provisions
+                if p.chunk_type != "annex"
+                and any(stem in (p.text_in_force or "") for stem in _AMEND_STEMS)]
+
+    def _fetch(p):
+        """One provision's amendment LLM call (with structure-only retry). Returns the
+        parsed dict or None; raises SystemExit (no key) to the caller."""
         try:
-            data = _call_json(complete, _SYSTEM, text, _AMEND_MAX_TOKENS)
+            data = _call_json(complete, _SYSTEM, p.text_in_force or "", _AMEND_MAX_TOKENS)
             if data is None:                        # truncated/invalid JSON
-                log.warning("amend_llm %s art %s: JSON unparseable (a replacement "
-                            "block likely overran the token cap); retrying "
-                            "structure-only so the edge is not lost",
-                            law.instrument_id, p.article_no)
-                data = _call_json(complete, _SYSTEM_NOECHO, text, 1500)
+                log.warning("amend_llm %s art %s: JSON unparseable (a replacement block "
+                            "likely overran the token cap); retrying structure-only so "
+                            "the edge is not lost", law.instrument_id, p.article_no)
+                data = _call_json(complete, _SYSTEM_NOECHO, p.text_in_force or "", 1500)
+            return data
         except SystemExit:
             raise                                   # no key -> let caller fall back
         except Exception as e:                      # noqa: BLE001
             log.warning("amend extract failed on %s art %s: %s",
                         law.instrument_id, p.article_no, e)
-            continue
-        if data is None:                            # echo + structure-only both failed
-            log.warning("amend_llm %s art %s: structure-only retry also failed; "
-                        "skipping", law.instrument_id, p.article_no)
-            continue
+            return None
 
+    # Fan the (independent, I/O-bound) LLM calls out across workers — the slow part —
+    # but BUILD the ops SERIALLY below, in provision order, so the per-target
+    # sub-edit ordinals stay deterministic + idempotent across runs.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    conc = max(1, getattr(config, "LLM_CONCURRENCY", 8))
+    fetched: dict = {}
+    if eligible:
+        with ThreadPoolExecutor(max_workers=min(conc, len(eligible))) as ex:
+            futs = {ex.submit(_fetch, p): i for i, p in enumerate(eligible)}
+            for fut in as_completed(futs):
+                fetched[futs[fut]] = fut.result()   # keyed by index; SystemExit propagates
+
+    for i, p in enumerate(eligible):                # serial, deterministic order
+        data = fetched.get(i)
+        if data is None:                            # echo + structure-only both failed
+            continue
         for a in (data.get("amendments") or []):
             if not isinstance(a, dict):
                 continue
