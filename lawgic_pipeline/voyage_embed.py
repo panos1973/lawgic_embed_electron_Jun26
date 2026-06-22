@@ -32,6 +32,10 @@ OVERSIZE_SAFETY = 0.45
 # proven value). Using 3 here under-counted by ~2x, so a window we estimated at
 # 23k was really ~46k tokens and Voyage rejected it (>32k). Stay conservative.
 CHARS_PER_TOKEN = 1.5
+# voyage-context-3 rejects an empty / whitespace-only input. A blank provision (an
+# image- or drawing-only page Azure DI returned empty for, a structure-only section)
+# must not fail the WHOLE document, so blanks are sent as this placeholder instead.
+_BLANK_PLACEHOLDER = "[χωρίς κείμενο]"
 
 log = logsetup.get("embed")
 
@@ -133,6 +137,30 @@ def _plan_batches(chunks: list[str]) -> list[list[int]]:
     return batches
 
 
+def _embed_one(chunk: str) -> list[float]:
+    """Embed ONE chunk to ONE vector. A chunk that alone exceeds the context window is
+    split into sub-window pieces, each embedded as its OWN document, then mean-pooled
+    (preserving the 1-vector-per-chunk contract). Used for single-chunk windows and as
+    the per-chunk fallback when a whole multi-chunk window is rejected."""
+    def _call(text: str) -> list[float]:
+        rr = ratelimit.with_retry(
+            lambda: client().contextualized_embed(
+                inputs=[[text]], model=config.EMBED_MODEL,
+                input_type="document", output_dimension=config.EMBED_DIM),
+            provider="voyage")
+        return list(rr.results[0].embeddings[0])
+
+    if _est_tokens(chunk) <= int(CONTEXT_WINDOW_TOKENS * SAFETY):
+        return _call(chunk)
+    # Oversized: the 32k limit is per input document (the SUM of its chunks), so
+    # sending the sub-segments together would still be oversize. Embed each separately
+    # and mean-pool to one vector.
+    segs = _split_oversized(chunk, int(CONTEXT_WINDOW_TOKENS * OVERSIZE_SAFETY))
+    log.warning("oversized chunk ~%d tok -> %d sub-segment(s), embedded separately + pooled",
+                _est_tokens(chunk), len(segs))
+    return _pool([_call(seg) for seg in segs])
+
+
 def embed_law_chunks(ordered_chunks: list[str],
                      progress: Optional[Callable[[str], None]] = None
                      ) -> list[list[float]]:
@@ -140,6 +168,19 @@ def embed_law_chunks(ordered_chunks: list[str],
     log and, if `progress` is given, emits a human line per step for the UI."""
     if not ordered_chunks:
         return []
+    # voyage-context-3 rejects an empty / whitespace-only input ("the example at index
+    # 0 in your batch has ..."), which fails the WHOLE document. A blank provision (an
+    # image/drawing-only page DI returned empty for, a structure-only section) carries
+    # no text -> substitute a placeholder so the document still embeds and loads.
+    blanks = sum(1 for c in ordered_chunks if not (c or "").strip())
+    if blanks:
+        log.warning("%d/%d chunk(s) blank (no extractable text — e.g. image-only page); "
+                    "using a placeholder so the document is not lost", blanks, len(ordered_chunks))
+        if progress:
+            progress(f"{blanks} blank chunk(s) → placeholder (kept document embeddable)")
+        ordered_chunks = [c if (c or "").strip() else _BLANK_PLACEHOLDER
+                          for c in ordered_chunks]
+
     batches = _plan_batches(ordered_chunks)
     est = sum(_est_tokens(c) for c in ordered_chunks)
     log.info("start: %d chunks, ~%d tok, %d batch(es), model=%s dim=%d",
@@ -147,66 +188,44 @@ def embed_law_chunks(ordered_chunks: list[str],
     if progress:
         progress(f"{len(ordered_chunks)} chunks → {len(batches)} batch(es), ~{est // 1000}k tok")
 
-    budget = int(CONTEXT_WINDOW_TOKENS * SAFETY)
     out: list[list[float]] = []
     t0 = time.perf_counter()
     for bi, idxs in enumerate(batches, 1):
         span = [ordered_chunks[i] for i in idxs]
         bt = time.perf_counter()
 
-        # rare case: a window holds a single chunk that alone exceeds the budget
-        # (e.g. a giant article or table). Split it, embed the pieces, and pool
-        # back to ONE vector so the 1-vector-per-chunk contract is preserved.
-        if len(span) == 1 and _est_tokens(span[0]) > budget:
-            # Split the over-window chunk and embed EACH sub-segment as its OWN
-            # document. Sending them together (inputs=[segs]) does NOT help — the
-            # 32k limit is per input document (the SUM of its chunks), so the
-            # combined document is still oversize. That was the bug that rejected
-            # large bilingual annexes ("the example at index 0 ... too many
-            # tokens"). Embed per-segment, then mean-pool to one vector so the
-            # 1-vector-per-chunk contract holds.
-            subseg_budget = int(CONTEXT_WINDOW_TOKENS * OVERSIZE_SAFETY)
-            segs = _split_oversized(span[0], subseg_budget)
-            log.warning("batch %d/%d: oversized chunk ~%d tok -> %d sub-segment(s), "
-                        "embedded separately + pooled", bi, len(batches),
-                        _est_tokens(span[0]), len(segs))
-            if progress:
-                progress(f"batch {bi}/{len(batches)}: oversized chunk → "
-                         f"{len(segs)} sub-segment(s), embedded separately + pooled")
-            seg_vecs: list[list[float]] = []
-            for seg in segs:
-                try:
-                    rr = ratelimit.with_retry(
-                        lambda seg=seg: client().contextualized_embed(
-                            inputs=[[seg]], model=config.EMBED_MODEL,
-                            input_type="document", output_dimension=config.EMBED_DIM),
-                        provider="voyage")
-                except Exception as e:
-                    log.exception("batch %d/%d FAILED (oversized split): %s",
-                                  bi, len(batches), e)
-                    if progress:
-                        progress(f"batch {bi}/{len(batches)} failed: {e}")
-                    raise
-                seg_vecs.append(list(rr.results[0].embeddings[0]))
-            out.append(_pool(seg_vecs))
+        # A single-chunk window (incl. an oversized one) is embedded on its own.
+        if len(span) == 1:
+            out.append(_embed_one(span[0]))
             dt = time.perf_counter() - bt
-            log.info("batch %d/%d: 1 oversized chunk (%d segs, separate) in %.2fs",
-                     bi, len(batches), len(segs), dt)
+            log.info("batch %d/%d: 1 chunk in %.2fs", bi, len(batches), dt)
+            if len(batches) > 1 and progress:
+                progress(f"batch {bi}/{len(batches)}: 1 chunk, {dt:.1f}s")
             continue
 
         try:
             r = ratelimit.with_retry(
-                lambda: client().contextualized_embed(
+                lambda span=span: client().contextualized_embed(
                     inputs=[span], model=config.EMBED_MODEL,
                     input_type="document", output_dimension=config.EMBED_DIM),
                 provider="voyage")
-        except Exception as e:
-            log.exception("batch %d/%d FAILED (%d chunks): %s",
-                          bi, len(batches), len(span), e)
+            out.extend(r.results[0].embeddings)
+        except Exception as e:                    # noqa: BLE001
+            if ratelimit._is_retryable(e):        # network/429 that survived retries -> fatal
+                log.exception("batch %d/%d FAILED (%d chunks): %s",
+                              bi, len(batches), len(span), e)
+                if progress:
+                    progress(f"batch {bi}/{len(batches)} failed: {e}")
+                raise
+            # The whole-window request was content-rejected (e.g. a chunk the char→token
+            # estimate under-counted). Don't lose the document: embed each chunk on its
+            # own so only a genuinely unembeddable chunk (if any) could be affected.
+            log.warning("batch %d/%d window rejected (%s) — falling back to per-chunk",
+                        bi, len(batches), e)
             if progress:
-                progress(f"batch {bi}/{len(batches)} failed: {e}")
-            raise
-        out.extend(r.results[0].embeddings)
+                progress(f"batch {bi}/{len(batches)}: window rejected, embedding per-chunk")
+            for c in span:
+                out.append(_embed_one(c))
         dt = time.perf_counter() - bt
         log.info("batch %d/%d: %d chunks in %.2fs", bi, len(batches), len(span), dt)
         if len(batches) > 1 and progress:

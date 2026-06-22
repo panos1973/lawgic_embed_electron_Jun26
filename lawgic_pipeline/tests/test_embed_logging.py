@@ -191,6 +191,54 @@ def test_embed_progress_reports_each_batch(monkeypatch):
     assert sum(1 for m in msgs if m.startswith("batch ")) == 2
 
 
+# ── robustness: blank chunks + window rejection (the 300-file upload failures) ──
+def test_blank_chunks_get_placeholder_not_rejected(monkeypatch):
+    """A blank provision (an image/drawing-only page Azure DI returned empty for) must
+    not be sent as an empty input — voyage-context-3 rejects it and that would fail the
+    whole document. It is replaced by a placeholder; one vector per chunk still returns."""
+    rec = _RecordingClient()
+    monkeypatch.setattr(ve, "client", lambda: rec)
+    out = ve.embed_law_chunks(["πραγματικό κείμενο", "", "   ", "\n"])
+    assert len(out) == 4                                   # nothing dropped
+    sent = [c for inp in rec.inputs for doc in inp for c in doc]
+    assert sent and all(c.strip() for c in sent)           # no empty input ever sent
+
+
+class _RejectWindowClient:
+    """400s on a multi-chunk window (Voyage's 'example at index 0 …' rejection) but
+    succeeds on single-chunk requests — to exercise the per-chunk fallback."""
+    def __init__(self):
+        self.singles = 0
+
+    def contextualized_embed(self, inputs, model, input_type, output_dimension):
+        if len(inputs[0]) > 1:
+            raise ValueError("400 - the example at index 0 in your batch has ...")
+        self.singles += 1
+        return type("R", (), {"results": [type("X", (), {"embeddings": [[0.1] * output_dimension]})()]})()
+
+
+def test_window_rejection_falls_back_to_per_chunk(monkeypatch):
+    # a content-rejected window must not lose the document: re-embed each chunk solo.
+    rej = _RejectWindowClient()
+    monkeypatch.setattr(ve, "client", lambda: rej)
+    out = ve.embed_law_chunks(["a", "b", "c"])             # one multi-chunk window
+    assert len(out) == 3                                   # document NOT lost
+    assert rej.singles == 3                                # each chunk embedded solo
+
+
+def test_transient_window_error_still_propagates(monkeypatch):
+    # a 429/5xx that survives retries is fatal — it must NOT be masked by the per-chunk
+    # fallback (that would hammer a down provider chunk-by-chunk).
+    class _Throttled:
+        def contextualized_embed(self, inputs, model, input_type, output_dimension):
+            raise RuntimeError("429 too many requests")
+    monkeypatch.setattr(ve, "client", lambda: _Throttled())
+    monkeypatch.setattr("ratelimit.with_retry", lambda fn, **k: fn())   # no real backoff
+    import pytest
+    with pytest.raises(RuntimeError):
+        ve.embed_law_chunks(["a", "b", "c"])
+
+
 def test_embed_empty_returns_empty(monkeypatch):
     monkeypatch.setattr(ve, "client", lambda: (_ for _ in ()).throw(AssertionError()))
     assert ve.embed_law_chunks([]) == []        # never touches the client
