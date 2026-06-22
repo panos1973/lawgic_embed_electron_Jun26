@@ -177,6 +177,14 @@ input {
 input:focus { outline: none; border-color: var(--accent); }
 .saved { color: var(--done); font-size: 11px; }
 
+/* settings: show/hide ("eye") toggle injected next to each API-key field */
+.pw-wrap { position: relative; display: flex; }
+.pw-wrap input { flex: 1; min-width: 0; padding-right: 38px; }
+.pw-eye { position: absolute; right: 4px; top: 0; bottom: 0; width: 32px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; cursor: pointer; color: var(--muted); padding: 0; }
+.pw-eye:hover { color: var(--text); }
+
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes slide { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
