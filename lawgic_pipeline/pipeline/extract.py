@@ -169,14 +169,23 @@ def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
         # TABLE_VISION; runs ONLY on the flagged pages (tables ∪ poor-OCR pages);
         # degrades to the existing extracted text if it returns None.
         if getattr(config, "TABLE_VISION", False) and upgrade_pages:
-            from pipeline.table_vision import read_page_vision
-            for pg in upgrade_pages:
-                r, why = read_page_vision(path, pg)
-                if r and 1 <= pg <= len(pages_markdown):
-                    pages_markdown[pg - 1] = r
-                else:
-                    warnings.append(
-                        f"page vision: page {pg} not read ({why}); kept extracted text")
+            import llm
+            if not llm.supports_vision():
+                # e.g. DeepSeek is text-only — attempting vision just fires a doomed,
+                # retried 400 ("unknown variant image_url") per page. Skip once and
+                # keep the extracted text.
+                warnings.append(
+                    f"table vision skipped: LLM provider '{config.LLM_PROVIDER}' has no "
+                    f"image input — {len(upgrade_pages)} page(s) kept as extracted text")
+            else:
+                from pipeline.table_vision import read_page_vision
+                for pg in upgrade_pages:
+                    r, why = read_page_vision(path, pg)
+                    if r and 1 <= pg <= len(pages_markdown):
+                        pages_markdown[pg - 1] = r
+                    else:
+                        warnings.append(
+                            f"page vision: page {pg} not read ({why}); kept extracted text")
         text = "\n\n".join(m for m in pages_markdown if m)
 
     # Masthead is parsed on the full text (it needs the cover block); the body

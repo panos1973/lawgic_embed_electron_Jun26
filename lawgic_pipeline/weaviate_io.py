@@ -256,6 +256,40 @@ def _fek_year(law: Law) -> int | None:
     return None
 
 
+def _insert_or_update(coll, uuid, props, vector=None) -> None:
+    """Write one object idempotently. A plain data.insert 422s ("id already exists")
+    when the deterministic UUID is already stored — which happens on any resume or
+    re-embed (the state DB and the store can fall out of sync after a crash, or the
+    state DB is reset while the remote collections persist). Overwrite in place
+    instead of failing the whole document."""
+    try:
+        coll.data.insert(properties=props, uuid=uuid, vector=vector)
+    except Exception as e:                                   # noqa: BLE001
+        if "already exists" in str(e).lower():
+            coll.data.update(uuid=uuid, properties=props, vector=vector)
+        else:
+            raise
+
+
+def _resolve_batch_conflicts(coll, label: str) -> None:
+    """Make a batch load idempotent. Weaviate's batch insert cannot upsert: an object
+    whose deterministic per-version UUID is already stored comes back in
+    failed_objects as an 'already exists' (422) error. On a resume / re-embed that is
+    expected — overwrite those objects in place (the failed ErrorObject carries the
+    original uuid/properties/vector). Any OTHER failure is a real error and is raised."""
+    real = []
+    for err in (coll.batch.failed_objects or []):
+        msg = (getattr(err, "message", "") or str(err)).lower()
+        bo = getattr(err, "object_", None)
+        if "already exists" in msg and bo is not None:
+            coll.data.update(uuid=bo.uuid, properties=bo.properties,
+                             vector=getattr(bo, "vector", None))
+        else:
+            real.append(err)
+    if real:
+        raise RuntimeError(f"{label} load failed: {real[:2]}")
+
+
 def load_document(client, law: Law, tenant: str = None):
     """Write the Jun2026LawDocument graph node (one per law, no vectors).
 
@@ -286,7 +320,7 @@ def load_document(client, law: Law, tenant: str = None):
     }
     # drop None so we never write nulls into typed (DATE/INT) fields
     props = {k: v for k, v in props.items() if v is not None}
-    doc.data.insert(properties=props, uuid=generate_uuid5("doc:" + law.instrument_id))
+    _insert_or_update(doc, generate_uuid5("doc:" + law.instrument_id), props)
 
 
 def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
@@ -325,8 +359,7 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
                 props["valid_to"] = vt
             b.add_object(properties=props, vector=vec,
                          uuid=_flat_version_uuid(p.canonical_id, vf))
-    if flat.batch.failed_objects:
-        raise RuntimeError(f"flat load failed: {flat.batch.failed_objects[:2]}")
+    _resolve_batch_conflicts(flat, "flat")
 
     with art.batch.dynamic() as b:
         for i, (p, vec) in enumerate(zip(law.provisions, vectors)):
@@ -354,8 +387,7 @@ def load_law(client, law: Law, vectors: list[list[float]], tenant: str = None):
                 props["valid_to"] = vt
             b.add_object(properties={k: v for k, v in props.items() if v is not None},
                          vector=vec, uuid=_art_version_uuid(p.canonical_id, vf))
-    if art.batch.failed_objects:
-        raise RuntimeError(f"article load failed: {art.batch.failed_objects[:2]}")
+    _resolve_batch_conflicts(art, "article")
 
 
 def update_law_enrichment(client, law: Law, tenant: str = None) -> int:
@@ -474,8 +506,7 @@ def load_amendments(client, ops: list[AmendmentOp], source_law: Law = None,
             b.add_object(properties=props,
                          uuid=generate_uuid5(
                              f"amd:{op.op}:{op.target_id}:{op.sub_edit_ordinal}"))
-    if amd.batch.failed_objects:
-        raise RuntimeError(f"amendment load failed: {amd.batch.failed_objects[:2]}")
+    _resolve_batch_conflicts(amd, "amendment")
 
 
 def load_delegations(client, edges, source_law: Law = None, tenant: str = None):
@@ -505,8 +536,7 @@ def load_delegations(client, edges, source_law: Law = None, tenant: str = None):
             b.add_object(properties=props,
                          uuid=generate_uuid5(
                              f"deleg:{e.implementing_id}:{e.enabling_id}"))
-    if deleg.batch.failed_objects:
-        raise RuntimeError(f"delegation load failed: {deleg.batch.failed_objects[:2]}")
+    _resolve_batch_conflicts(deleg, "delegation")
 
 
 # Outer quotation wrappers an amendment uses to delimit its replacement block.

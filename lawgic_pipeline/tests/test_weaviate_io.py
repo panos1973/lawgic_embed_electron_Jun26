@@ -17,7 +17,7 @@ class _FakeData:
     def __init__(self, sink, name):
         self.sink, self.name = sink, name
 
-    def insert(self, properties, uuid):
+    def insert(self, properties, uuid, vector=None):
         self.sink.setdefault(self.name, []).append({"props": properties, "uuid": uuid})
 
 
@@ -202,6 +202,129 @@ def test_load_law_denormalizes_amends_provisions_from_source_id():
     wio.load_law(c, law, [[0.0] * 4])
     flat = c.sink["Jun2026GRLegaDocs"][0]["props"]
     assert flat["amends_provisions"] == ["ν.4675/2024#αρ.24:replaces"]
+
+
+# --- idempotent re-load: a duplicate deterministic UUID must OVERWRITE, not 422 -----
+class _DupErr:
+    def __init__(self, message, object_):
+        self.message, self.object_ = message, object_
+
+
+class _DupBatchObj:
+    def __init__(self, uuid, properties, vector):
+        self.uuid, self.properties, self.vector = uuid, properties, vector
+
+
+class _DupColl:
+    """Mimics real Weaviate over a shared {name: {uuid: props}} store: inserting/adding
+    an already-present uuid fails ('id ... already exists'); update overwrites. Lets us
+    prove the loaders are idempotent on a resume/re-embed without a live cluster."""
+    def __init__(self, store, name):
+        self.store, self.name, self.failed_objects = store, name, []
+
+    def with_tenant(self, t):
+        return self
+
+    @property
+    def tenants(self):
+        return type("T", (), {"get": lambda s: {"gr": object()},
+                              "create": lambda s, ts: None})()
+
+    @property
+    def batch(self):
+        return self
+
+    def dynamic(self):
+        coll = self
+        coll.failed_objects = []                      # reset per batch, like the real client
+
+        class Ctx:
+            def __enter__(s):
+                return s
+
+            def __exit__(s, *a):
+                return False
+
+            def add_object(s, properties, uuid, vector=None):
+                u = str(uuid)
+                d = coll.store.setdefault(coll.name, {})
+                if u in d:
+                    coll.failed_objects.append(_DupErr(
+                        f"id '{u}' already exists", _DupBatchObj(u, properties, vector)))
+                else:
+                    d[u] = dict(properties)
+        return Ctx()
+
+    @property
+    def data(self):
+        coll = self
+
+        class D:
+            def insert(s, properties, uuid, vector=None):
+                u = str(uuid)
+                d = coll.store.setdefault(coll.name, {})
+                if u in d:
+                    raise RuntimeError(
+                        f"Object was not added! Unexpected status code: 422 — "
+                        f"id '{u}' already exists")
+                d[u] = dict(properties)
+
+            def update(s, uuid, properties, vector=None):
+                coll.store.setdefault(coll.name, {})[str(uuid)] = dict(properties)
+        return D()
+
+
+class _DupClient:
+    def __init__(self):
+        self.store = {}
+        outer = self
+
+        class C:
+            def use(s, name):
+                return _DupColl(outer.store, name)
+
+            def exists(s, name):
+                return name in outer.store
+        self.collections = C()
+
+
+def test_loaders_are_idempotent_on_reload():
+    """A resume / re-embed re-runs a doc whose deterministic UUIDs are already stored.
+    The batch/insert can't upsert, so the loaders must catch 'already exists' and
+    overwrite — not fail the whole document (the 422 storm in the field log)."""
+    law = _law()
+    law.amendments.append(AmendmentOp(
+        op="replaces", target_id="ν.4675/2024#αρ.24", scope="article", new_text="νέο",
+        resolved=False, sub_edit_ordinal="0", source_id="ν.5090/2024#αρ.1"))
+    edges = [DelegationEdge(enabling_id="ν.4412/2016#αρ.5",
+                            implementing_id="ν.5090/2024#αρ.1",
+                            enabling_law_number="4412/2016", enabling_article_number="5",
+                            delegated_authority="Υπουργός", delegation_scope="σκοπός")]
+    c = _DupClient()
+    # first load
+    wio.load_document(c, law)
+    wio.load_law(c, law, [[0.1] * 4])
+    wio.load_amendments(c, law.amendments, source_law=law)
+    wio.load_delegations(c, edges, source_law=law)
+    # second load of the SAME doc must not raise and must not duplicate objects
+    wio.load_document(c, law)
+    wio.load_law(c, law, [[0.2] * 4])
+    wio.load_amendments(c, law.amendments, source_law=law)
+    wio.load_delegations(c, edges, source_law=law)
+    for coll in (wio.config.FLAT_COLLECTION, wio.config.GRAPH_ARTICLE,
+                 wio.config.GRAPH_DOCUMENT, wio.config.GRAPH_AMENDMENT,
+                 wio.config.GRAPH_DELEGATION):
+        assert len(c.store.get(coll, {})) == 1, f"{coll} duplicated on re-load"
+
+
+def test_resolve_batch_conflicts_reraises_real_failure():
+    """Only 'already exists' is swallowed; a genuine batch failure still raises."""
+    import pytest
+    store = {}
+    coll = _DupColl(store, wio.config.FLAT_COLLECTION)
+    coll.failed_objects = [_DupErr("WRITE failed: schema mismatch", None)]
+    with pytest.raises(RuntimeError):
+        wio._resolve_batch_conflicts(coll, "flat")
 
 
 def test_flat_and_article_write_bm25_fields():

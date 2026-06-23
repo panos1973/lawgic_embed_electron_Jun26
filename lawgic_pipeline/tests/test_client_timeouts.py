@@ -69,3 +69,19 @@ def test_voyage_client_is_bounded(monkeypatch):
     voyage_embed.client()
     assert rec.kwargs["timeout"] == 99.0
     assert rec.kwargs["max_retries"] == 0
+
+
+def test_supports_vision_gates_text_only_providers(monkeypatch):
+    # DeepSeek is text-only: complete_vision would fire a doomed 400 per page, so the
+    # table-vision path must be gated off for it. Vision providers stay enabled.
+    monkeypatch.setattr(config, "LLM_PROVIDER", "deepseek")
+    assert llm.supports_vision() is False
+    for p in ("openai", "anthropic", "azure", "gemini"):
+        monkeypatch.setattr(config, "LLM_PROVIDER", p)
+        assert llm.supports_vision() is True
+    # qwen only when the multimodal qwen-vl line is selected
+    monkeypatch.setattr(config, "LLM_PROVIDER", "qwen")
+    monkeypatch.setattr(config, "LLM_MODEL", "qwen-plus")
+    assert llm.supports_vision() is False
+    monkeypatch.setattr(config, "LLM_MODEL", "qwen-vl-max")
+    assert llm.supports_vision() is True

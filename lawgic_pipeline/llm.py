@@ -64,6 +64,23 @@ def model_name() -> str:
     return config.LLM_MODEL or spec["default_model"]
 
 
+# Providers whose default models accept image input on the chat surface we use.
+# DeepSeek V4 (deepseek-chat / deepseek-v4-*) is TEXT-ONLY and rejects `image_url`
+# with a hard 400 ("unknown variant image_url"), so table-vision must skip it instead
+# of firing a doomed (and retried) call per scanned page.
+_VISION_PROVIDERS = {"anthropic", "openai", "azure", "gemini"}
+
+
+def supports_vision() -> bool:
+    """True if the configured LLM provider/model can read an image (complete_vision)."""
+    p = config.LLM_PROVIDER
+    if p in _VISION_PROVIDERS:
+        return True
+    if p == "qwen":                       # only the qwen-vl-* line is multimodal
+        return "vl" in model_name().lower()
+    return False                          # deepseek (and anything else) — text only
+
+
 def complete(system: str, user: str, want_json: bool = True,
              max_tokens: int = 1024) -> str:
     """Return the model's text output. `system` should be the STABLE prefix."""
