@@ -207,7 +207,9 @@
           Read tables &amp; scanned/figure pages with a vision LLM (rasterizes only the
           flagged pages and has the model read them — digital or photocopied; tables,
           seals or figures; faithful transcription + a Greek narration that embeds well.
-          Needs the provider key.)</label>
+          If the main model is text-only (e.g. DeepSeek) it automatically uses your
+          Azure OpenAI — name its deployment <code>gpt-4.1-mini</code> — so no extra
+          keys are needed.)</label>
       </div>
       <div class="panel">
         <div class="panel-title">Credentials <span class="enc" id="encNote"></span></div>

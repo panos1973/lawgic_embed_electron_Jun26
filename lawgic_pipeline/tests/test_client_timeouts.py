@@ -71,10 +71,19 @@ def test_voyage_client_is_bounded(monkeypatch):
     assert rec.kwargs["max_retries"] == 0
 
 
+def _clear_vision_creds(monkeypatch):
+    # no fallback provider configured -> isolate the main-provider capability check
+    monkeypatch.setattr(config, "VISION_PROVIDER", "")
+    monkeypatch.setattr(config, "VISION_MODEL", "")
+    for attr in ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_KEY", "OPENAI_API_KEY",
+                 "GEMINI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.setattr(config, attr, "")
+
+
 def test_supports_vision_gates_text_only_providers(monkeypatch):
     # DeepSeek is text-only: complete_vision would fire a doomed 400 per page, so the
     # table-vision path must be gated off for it. Vision providers stay enabled.
-    monkeypatch.setattr(config, "VISION_PROVIDER", "")     # no override -> main provider
+    _clear_vision_creds(monkeypatch)
     monkeypatch.setattr(config, "LLM_PROVIDER", "deepseek")
     assert llm.supports_vision() is False
     for p in ("openai", "anthropic", "azure", "gemini"):
@@ -86,6 +95,22 @@ def test_supports_vision_gates_text_only_providers(monkeypatch):
     assert llm.supports_vision() is False
     monkeypatch.setattr(config, "LLM_MODEL", "qwen-vl-max")
     assert llm.supports_vision() is True
+
+
+def test_vision_auto_selects_configured_azure_for_text_only_main(monkeypatch):
+    # The shipped scenario: main = DeepSeek (text-only), Azure OpenAI already set up in
+    # Settings. Vision must auto-route to Azure with NO new variables, using the
+    # existing AZURE_OPENAI_* credentials and the gpt-4.1-mini deployment by default.
+    _clear_vision_creds(monkeypatch)
+    monkeypatch.setattr(config, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(config, "AZURE_OPENAI_ENDPOINT", "https://lawgic.openai.azure.com/")
+    monkeypatch.setattr(config, "AZURE_OPENAI_KEY", "azkey")
+    assert llm.vision_provider() == "azure"
+    assert llm.vision_model() == "gpt-4.1-mini"
+    assert llm.supports_vision() is True
+    # an explicit VISION_MODEL (non-standard Azure deployment name) still wins
+    monkeypatch.setattr(config, "VISION_MODEL", "my-4o-mini")
+    assert llm.vision_model() == "my-4o-mini"
 
 
 def test_vision_routes_to_separate_provider(monkeypatch):

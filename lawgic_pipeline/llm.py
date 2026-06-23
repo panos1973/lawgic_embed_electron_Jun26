@@ -72,39 +72,62 @@ def model_name() -> str:
     return config.LLM_MODEL or spec["default_model"]
 
 
+# Providers whose default models accept image input on the chat surface we use.
+# DeepSeek V4 (deepseek-chat / deepseek-v4-*) is TEXT-ONLY and rejects `image_url`
+# with a hard 400 ("unknown variant image_url"), so table-vision must skip it (or
+# route to a different provider) instead of firing a doomed, retried call per page.
+_VISION_PROVIDERS = {"anthropic", "openai", "azure", "gemini"}
+# Sensible multimodal default per vision provider when none is given explicitly.
+# For azure this is the DEPLOYMENT name — name your Azure OpenAI deployment to match
+# (or set VISION_MODEL). gpt-4.1-mini is the cheap, capable table reader.
+_VISION_DEFAULT_MODEL = {"azure": "gpt-4.1-mini", "openai": "gpt-4.1-mini"}
+
+
+def _provider_can_see(provider: str, model: str) -> bool:
+    if provider in _VISION_PROVIDERS:
+        return True
+    if provider == "qwen":                # only the qwen-vl-* line is multimodal
+        return "vl" in (model or "").lower()
+    return False                          # deepseek (and anything else) — text only
+
+
 def vision_provider() -> str:
-    """Provider used for IMAGE reads — VISION_PROVIDER if set, else the main one."""
-    return config.VISION_PROVIDER or config.LLM_PROVIDER
+    """Which provider reads table/figure IMAGES. Order: an explicit VISION_PROVIDER
+    override; else the main LLM_PROVIDER if it can see; else AUTO-FALL-BACK to an
+    already-configured vision-capable provider — preferring the existing Azure OpenAI
+    (no new credentials), then OpenAI / Gemini / Anthropic. So a text-only main model
+    (DeepSeek) gets table-vision for free off the keys already in Settings."""
+    if config.VISION_PROVIDER:
+        return config.VISION_PROVIDER
+    if _provider_can_see(config.LLM_PROVIDER, model_name()):
+        return config.LLM_PROVIDER
+    if config.AZURE_OPENAI_ENDPOINT and config.AZURE_OPENAI_KEY:
+        return "azure"
+    if config.OPENAI_API_KEY:
+        return "openai"
+    if config.GEMINI_API_KEY:
+        return "gemini"
+    if config.ANTHROPIC_API_KEY:
+        return "anthropic"
+    return config.LLM_PROVIDER             # nothing configured -> stays, vision skipped
 
 
 def vision_model() -> str:
     if config.VISION_MODEL:
         return config.VISION_MODEL
-    # no override + vision uses the main provider -> honour the main model choice
-    # (e.g. LLM_MODEL=qwen-vl-max); otherwise the vision provider's default.
-    if vision_provider() == config.LLM_PROVIDER and config.LLM_MODEL:
+    p = vision_provider()
+    # vision uses the main provider with no override -> honour the main model choice
+    # (e.g. LLM_MODEL=qwen-vl-max).
+    if p == config.LLM_PROVIDER and config.LLM_MODEL:
         return config.LLM_MODEL
-    return config.PROVIDERS[vision_provider()]["default_model"]
-
-
-# Providers whose default models accept image input on the chat surface we use.
-# DeepSeek V4 (deepseek-chat / deepseek-v4-*) is TEXT-ONLY and rejects `image_url`
-# with a hard 400 ("unknown variant image_url"), so table-vision must skip it instead
-# of firing a doomed (and retried) call per scanned page.
-_VISION_PROVIDERS = {"anthropic", "openai", "azure", "gemini"}
+    return _VISION_DEFAULT_MODEL.get(p, config.PROVIDERS[p]["default_model"])
 
 
 def supports_vision() -> bool:
-    """True if the configured VISION provider/model can read an image. Checks the
-    VISION provider (VISION_PROVIDER, or LLM_PROVIDER when unset), so a text-only main
-    model (DeepSeek) can still get table-vision by pointing VISION_PROVIDER at a
-    multimodal one (e.g. openai / gpt-4.1-mini)."""
-    p = vision_provider()
-    if p in _VISION_PROVIDERS:
-        return True
-    if p == "qwen":                       # only the qwen-vl-* line is multimodal
-        return "vl" in vision_model().lower()
-    return False                          # deepseek (and anything else) — text only
+    """True if the resolved VISION provider/model can read an image. With a text-only
+    main model this reflects the auto-selected fallback (e.g. the configured Azure
+    OpenAI), so table-vision turns on whenever a capable provider is already set up."""
+    return _provider_can_see(vision_provider(), vision_model())
 
 
 def complete(system: str, user: str, want_json: bool = True,
