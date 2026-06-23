@@ -69,3 +69,83 @@ def test_voyage_client_is_bounded(monkeypatch):
     voyage_embed.client()
     assert rec.kwargs["timeout"] == 99.0
     assert rec.kwargs["max_retries"] == 0
+
+
+def _clear_vision_creds(monkeypatch):
+    # no fallback provider configured -> isolate the main-provider capability check
+    monkeypatch.setattr(config, "VISION_PROVIDER", "")
+    monkeypatch.setattr(config, "VISION_MODEL", "")
+    for attr in ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_KEY", "OPENAI_API_KEY",
+                 "GEMINI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.setattr(config, attr, "")
+
+
+def test_supports_vision_gates_text_only_providers(monkeypatch):
+    # DeepSeek is text-only: complete_vision would fire a doomed 400 per page, so the
+    # table-vision path must be gated off for it. Vision providers stay enabled.
+    _clear_vision_creds(monkeypatch)
+    monkeypatch.setattr(config, "LLM_PROVIDER", "deepseek")
+    assert llm.supports_vision() is False
+    for p in ("openai", "anthropic", "azure", "gemini"):
+        monkeypatch.setattr(config, "LLM_PROVIDER", p)
+        assert llm.supports_vision() is True
+    # qwen only when the multimodal qwen-vl line is the main model
+    monkeypatch.setattr(config, "LLM_PROVIDER", "qwen")
+    monkeypatch.setattr(config, "LLM_MODEL", "qwen-plus")
+    assert llm.supports_vision() is False
+    monkeypatch.setattr(config, "LLM_MODEL", "qwen-vl-max")
+    assert llm.supports_vision() is True
+
+
+def test_vision_auto_selects_configured_azure_for_text_only_main(monkeypatch):
+    # The shipped scenario: main = DeepSeek (text-only), Azure OpenAI already set up in
+    # Settings. Vision must auto-route to Azure with NO new variables, using the
+    # existing AZURE_OPENAI_* credentials and the gpt-4.1-mini deployment by default.
+    _clear_vision_creds(monkeypatch)
+    monkeypatch.setattr(config, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(config, "AZURE_OPENAI_ENDPOINT", "https://lawgic.openai.azure.com/")
+    monkeypatch.setattr(config, "AZURE_OPENAI_KEY", "azkey")
+    assert llm.vision_provider() == "azure"
+    assert llm.vision_model() == "gpt-4.1-mini"
+    assert llm.supports_vision() is True
+    # an explicit VISION_MODEL (non-standard Azure deployment name) still wins
+    monkeypatch.setattr(config, "VISION_MODEL", "my-4o-mini")
+    assert llm.vision_model() == "my-4o-mini"
+
+
+def test_vision_routes_to_separate_provider(monkeypatch):
+    # the hybrid: text-only main model (deepseek) + a dedicated vision provider so
+    # complete_vision goes to openai/gpt-4.1-mini while bulk text stays on deepseek.
+    monkeypatch.setattr(config, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(config, "VISION_PROVIDER", "openai")
+    monkeypatch.setattr(config, "VISION_MODEL", "gpt-4.1-mini")
+    monkeypatch.setattr(llm, "_vision_client", None)
+    monkeypatch.setattr(llm, "_vision_for", None)
+
+    assert llm.supports_vision() is True
+    assert llm.vision_provider() == "openai" and llm.vision_model() == "gpt-4.1-mini"
+
+    calls = {}
+
+    class _Comp:
+        def create(self, **k):
+            calls.update(k)
+            msg = type("M", (), {"content": '{"ok": 1}'})()
+            return type("R", (), {"choices": [type("C", (), {"message": msg})()]})()
+
+    class _FakeClient:
+        chat = type("Chat", (), {"completions": _Comp()})()
+
+    built = {}
+
+    def fake_make(provider):
+        built["provider"] = provider
+        return _FakeClient(), "openai"
+    monkeypatch.setattr(llm, "_make_client", fake_make)
+
+    out = llm.complete_vision("sys", "user text", "QkFTRTY0UE5H", want_json=True)
+    assert out == '{"ok": 1}'
+    assert built["provider"] == "openai"           # built the vision provider's client
+    assert calls["model"] == "gpt-4.1-mini"        # used the vision model
+    parts = calls["messages"][-1]["content"]       # image rode along as an image_url
+    assert any(p.get("type") == "image_url" for p in parts)

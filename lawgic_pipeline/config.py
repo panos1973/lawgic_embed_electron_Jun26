@@ -63,6 +63,16 @@ AMEND_EXTRACTOR = os.environ.get("AMEND_EXTRACTOR", "deterministic")  # determin
 # OR photocopied). Runs ONLY on detected table pages; needs an LLM key (e.g. gpt-4.1-mini).
 TABLE_VISION = os.environ.get("TABLE_VISION", "off").lower() in ("on", "true", "1")
 
+# OPTIONAL overrides for the table/figure IMAGE reads. By default vision needs NO
+# config: if the main LLM_PROVIDER is text-only (e.g. DeepSeek V4), complete_vision()
+# AUTO-FALLS-BACK to an already-configured vision-capable provider — preferring the
+# existing Azure OpenAI (AZURE_OPENAI_*), then OpenAI / Gemini / Anthropic — so it
+# reuses the credentials already in Settings, no new key. Set these only to force a
+# specific provider/model (VISION_MODEL for azure is the DEPLOYMENT name). Still gated
+# by TABLE_VISION. Vision pages are a tiny fraction of the corpus -> negligible spend.
+VISION_PROVIDER = os.environ.get("VISION_PROVIDER", "")   # blank -> auto-select
+VISION_MODEL = os.environ.get("VISION_MODEL", "")         # blank -> sensible default
+
 # sdk: which client. base_url: OpenAI-compatible endpoint (None = native). key: config attr.
 PROVIDERS = {
     "anthropic": {"sdk": "anthropic", "base_url": None,
