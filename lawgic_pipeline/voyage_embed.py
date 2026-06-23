@@ -44,7 +44,13 @@ def client():
     global _client
     if _client is None:
         config.require("VOYAGE_API_KEY")
-        _client = voyageai.Client(api_key=config.VOYAGE_API_KEY)
+        # Bound the request: the Voyage client otherwise falls back to a 600s timeout,
+        # long enough that a stalled socket freezes an embed worker for ~10 min before
+        # raising. max_retries=0 keeps our with_retry the single retry authority
+        # (see llm._ensure_client). The SDK reraises a "Request timed out" error our
+        # ratelimit._is_retryable already recognises, so the retry/pause path engages.
+        _client = voyageai.Client(api_key=config.VOYAGE_API_KEY,
+                                  timeout=config.NET_TIMEOUT, max_retries=0)
     return _client
 
 

@@ -31,9 +31,14 @@ def _ensure_client():
     key = getattr(config, spec["key"], "")
     if not key:
         raise SystemExit(f"Missing {spec['key']} for LLM_PROVIDER={config.LLM_PROVIDER}")
+    # Bound every call and let ratelimit.with_retry own ALL retries: max_retries=0
+    # disables the SDK's own (silent, slow) retry loop, so a stalled call fails within
+    # NET_TIMEOUT and is retried fast by us — or escalated to a clean PAUSE — instead
+    # of blocking a worker thread for the SDK's 600s × internal-retries default.
     if spec["sdk"] == "anthropic":
         import anthropic
-        _client = anthropic.Anthropic(api_key=key)
+        _client = anthropic.Anthropic(api_key=key, timeout=config.NET_TIMEOUT,
+                                      max_retries=0)
         _kind = "anthropic"
     elif spec["sdk"] == "azure":
         # Azure OpenAI: same chat.completions surface as OpenAI, but the client is
@@ -44,11 +49,13 @@ def _ensure_client():
         from openai import AzureOpenAI
         _client = AzureOpenAI(api_key=key,
                               azure_endpoint=config.AZURE_OPENAI_ENDPOINT,
-                              api_version=config.AZURE_OPENAI_API_VERSION)
+                              api_version=config.AZURE_OPENAI_API_VERSION,
+                              timeout=config.NET_TIMEOUT, max_retries=0)
         _kind = "openai"
     else:
         from openai import OpenAI
-        _client = OpenAI(api_key=key, base_url=spec["base_url"])
+        _client = OpenAI(api_key=key, base_url=spec["base_url"],
+                         timeout=config.NET_TIMEOUT, max_retries=0)
         _kind = "openai"
 
 
