@@ -511,44 +511,65 @@ _TABLE_NARRATION_SYSTEM = (
 )
 
 
+def _narrate_one(tabs, complete):
+    """One table-bearing provision's narration call. Returns the narration text, or
+    None on an empty/transient result. Raises SystemExit (no key) / a fatal error
+    (wrong key) to the caller — consistent with _enrich_one."""
+    try:
+        out = complete(_TABLE_NARRATION_SYSTEM, json.dumps(tabs, ensure_ascii=False),
+                       want_json=False, max_tokens=1500)
+    except SystemExit:
+        raise
+    except Exception as e:                                   # noqa: BLE001
+        from errors import looks_fatal
+        if looks_fatal(e):
+            raise                                            # wrong key/endpoint -> stop
+        return None                                          # transient -> leave as-is
+    return (out or "").strip()
+
+
 def narrate_tables(law: Law, progress=None, complete=None) -> Law:
     """Append a faithful Greek narration (one clause per data row) to every provision
     whose text contains a table, so the EMBEDDED vector carries the table's meaning
     — not just a diluted markdown grid. The verbatim markdown and the structured
     table_json are left untouched (exact lookup still works); the narration only adds
     semantic, paraphrase-friendly text (also indexed for BM25). One cheap text-LLM
-    call per table-bearing chunk. Skips silently without an LLM key; a wrong key is
-    fatal (consistent with enrich_llm), a transient error leaves that table as-is."""
+    call per table-bearing chunk. The calls are independent and I/O-bound, so they fan
+    out across config.LLM_CONCURRENCY workers (the rate limiter still caps the real
+    request rate) and results are applied in the main thread — table-heavy gazettes
+    (hundreds of tables) used to narrate one-at-a-time, minutes per document. Skips
+    silently without an LLM key; a wrong key is fatal (consistent with enrich_llm), a
+    transient error leaves that table as-is."""
     from pipeline.tables import tables_from_text
     if complete is None:
         complete = llm.complete
+    targets = [(p, t) for p in law.provisions
+               if (t := tables_from_text(p.text_in_force or ""))]
+    if not targets:
+        return law
+    conc = max(1, getattr(config, "LLM_CONCURRENCY", 8))
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     narrated = 0
-    for p in law.provisions:
-        tabs = tables_from_text(p.text_in_force or "")
-        if not tabs:
-            continue
-        try:
-            out = complete(_TABLE_NARRATION_SYSTEM, json.dumps(tabs, ensure_ascii=False),
-                           want_json=False, max_tokens=1500)
-        except SystemExit:
-            if progress and not narrated:
-                progress("no LLM key — skipping table narration")
-            return law
-        except Exception as e:                               # noqa: BLE001
-            from errors import looks_fatal
-            if looks_fatal(e):
-                raise                                        # wrong key/endpoint -> stop
-            continue                                         # transient -> leave table as-is
-        narration = (out or "").strip()
-        if not narration or narration in (p.text_in_force or ""):
-            continue
-        body = f"{p.text_in_force}\n\n[Πίνακας — αφήγηση περιεχομένου]\n{narration}"
-        p.text_in_force = body
-        p.text_normalized = fold_for_bm25(body)              # keep BM25 fields in sync
-        p.text_stemmed = stem_text(body)
-        p.content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
-        narrated += 1
-        if progress:
-            where = f"Άρθρο {p.article_no}" if p.article_no else (p.chunk_type or "chunk")
-            progress(f"{law.instrument_id}: table narrated — {where}")
+    with ThreadPoolExecutor(max_workers=min(conc, len(targets))) as ex:
+        futs = {ex.submit(_narrate_one, tabs, complete): p for p, tabs in targets}
+        for fut in as_completed(futs):
+            try:
+                narration = fut.result()
+            except SystemExit:
+                if progress and not narrated:
+                    progress("no LLM key — skipping table narration")
+                return law                                   # no key -> skip entirely
+            p = futs[fut]
+            if not narration or narration in (p.text_in_force or ""):
+                continue
+            body = f"{p.text_in_force}\n\n[Πίνακας — αφήγηση περιεχομένου]\n{narration}"
+            p.text_in_force = body
+            p.text_normalized = fold_for_bm25(body)          # keep BM25 fields in sync
+            p.text_stemmed = stem_text(body)
+            p.content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            narrated += 1
+            if progress:
+                where = f"Άρθρο {p.article_no}" if p.article_no else (p.chunk_type or "chunk")
+                progress(f"{law.instrument_id}: table narrated — {where}")
     return law

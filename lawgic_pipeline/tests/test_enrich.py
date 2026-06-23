@@ -344,3 +344,24 @@ def test_narrate_tables_degrades_without_llm_key():
         raise SystemExit("no key")
     narrate_tables(law, complete=no_key)               # must not raise
     assert law.provisions[0].text_in_force == md       # left exactly as-is
+
+
+def test_narrate_tables_fans_out_over_many_tables():
+    # table-heavy gazette (the Β΄3044/2026 case): EVERY table-bearing provision must be
+    # narrated when the calls fan out across workers, with each result applied to its
+    # own provision (no cross-talk).
+    md = ("| Κωδικός | ECTS |\n| --- | --- |\n| BT_{n} | {n} |\n")
+    law = Law(instrument_id="Β΄3044/2026", instrument_key="x", instrument_type=TYPE_NOMOS)
+    for n in range(1, 31):
+        law.provisions.append(Provision(
+            canonical_id=f"Β΄3044/2026#αρ.{n}", instrument_id="Β΄3044/2026",
+            instrument_key="x", instrument_type=TYPE_NOMOS, article_no=str(n),
+            chunk_type="article", text_in_force=md.format(n=n)))
+    seen = []
+    def fake(system, user, want_json=True, max_tokens=1024):
+        seen.append(user)
+        return f"αφήγηση {len(user)}"               # distinct per-table content
+    narrate_tables(law, complete=fake)
+    assert len(seen) == 30                           # one call per table-bearing provision
+    assert all("αφήγηση" in p.text_in_force for p in law.provisions)   # all narrated
+    assert all(p.content_hash for p in law.provisions)
