@@ -21,47 +21,70 @@ import config
 
 _client = None
 _kind = None
+_vision_client = None
+_vision_kind = None
+_vision_for = None        # which provider the cached vision client was built for
+
+
+def _make_client(provider: str):
+    """Build (client, kind) for one provider. Bounded timeout + max_retries=0 so
+    ratelimit.with_retry owns retries (see the NET_TIMEOUT rationale in config)."""
+    spec = config.PROVIDERS[provider]
+    key = getattr(config, spec["key"], "")
+    if not key:
+        raise SystemExit(f"Missing {spec['key']} for provider={provider}")
+    if spec["sdk"] == "anthropic":
+        import anthropic
+        return (anthropic.Anthropic(api_key=key, timeout=config.NET_TIMEOUT,
+                                    max_retries=0), "anthropic")
+    if spec["sdk"] == "azure":
+        # Azure OpenAI: same chat.completions surface as OpenAI, but pinned to the
+        # resource endpoint + api-version; `model` is the Azure DEPLOYMENT name.
+        if not config.AZURE_OPENAI_ENDPOINT:
+            raise SystemExit("Missing AZURE_OPENAI_ENDPOINT for provider=azure")
+        from openai import AzureOpenAI
+        return (AzureOpenAI(api_key=key, azure_endpoint=config.AZURE_OPENAI_ENDPOINT,
+                            api_version=config.AZURE_OPENAI_API_VERSION,
+                            timeout=config.NET_TIMEOUT, max_retries=0), "openai")
+    from openai import OpenAI
+    return (OpenAI(api_key=key, base_url=spec["base_url"],
+                   timeout=config.NET_TIMEOUT, max_retries=0), "openai")
 
 
 def _ensure_client():
     global _client, _kind
-    if _client is not None:
-        return
-    spec = config.PROVIDERS[config.LLM_PROVIDER]
-    key = getattr(config, spec["key"], "")
-    if not key:
-        raise SystemExit(f"Missing {spec['key']} for LLM_PROVIDER={config.LLM_PROVIDER}")
-    # Bound every call and let ratelimit.with_retry own ALL retries: max_retries=0
-    # disables the SDK's own (silent, slow) retry loop, so a stalled call fails within
-    # NET_TIMEOUT and is retried fast by us — or escalated to a clean PAUSE — instead
-    # of blocking a worker thread for the SDK's 600s × internal-retries default.
-    if spec["sdk"] == "anthropic":
-        import anthropic
-        _client = anthropic.Anthropic(api_key=key, timeout=config.NET_TIMEOUT,
-                                      max_retries=0)
-        _kind = "anthropic"
-    elif spec["sdk"] == "azure":
-        # Azure OpenAI: same chat.completions surface as OpenAI, but the client is
-        # pinned to the resource endpoint + api-version, and `model` (set by
-        # model_name()) is the Azure DEPLOYMENT name.
-        if not config.AZURE_OPENAI_ENDPOINT:
-            raise SystemExit("Missing AZURE_OPENAI_ENDPOINT for LLM_PROVIDER=azure")
-        from openai import AzureOpenAI
-        _client = AzureOpenAI(api_key=key,
-                              azure_endpoint=config.AZURE_OPENAI_ENDPOINT,
-                              api_version=config.AZURE_OPENAI_API_VERSION,
-                              timeout=config.NET_TIMEOUT, max_retries=0)
-        _kind = "openai"
-    else:
-        from openai import OpenAI
-        _client = OpenAI(api_key=key, base_url=spec["base_url"],
-                         timeout=config.NET_TIMEOUT, max_retries=0)
-        _kind = "openai"
+    if _client is None:
+        _client, _kind = _make_client(config.LLM_PROVIDER)
+
+
+def _ensure_vision_client():
+    """Lazily build the client for the VISION provider (VISION_PROVIDER, or the main
+    LLM_PROVIDER when unset). Cached, and rebuilt if the provider changes."""
+    global _vision_client, _vision_kind, _vision_for
+    prov = vision_provider()
+    if _vision_client is None or _vision_for != prov:
+        _vision_client, _vision_kind = _make_client(prov)
+        _vision_for = prov
 
 
 def model_name() -> str:
     spec = config.PROVIDERS[config.LLM_PROVIDER]
     return config.LLM_MODEL or spec["default_model"]
+
+
+def vision_provider() -> str:
+    """Provider used for IMAGE reads — VISION_PROVIDER if set, else the main one."""
+    return config.VISION_PROVIDER or config.LLM_PROVIDER
+
+
+def vision_model() -> str:
+    if config.VISION_MODEL:
+        return config.VISION_MODEL
+    # no override + vision uses the main provider -> honour the main model choice
+    # (e.g. LLM_MODEL=qwen-vl-max); otherwise the vision provider's default.
+    if vision_provider() == config.LLM_PROVIDER and config.LLM_MODEL:
+        return config.LLM_MODEL
+    return config.PROVIDERS[vision_provider()]["default_model"]
 
 
 # Providers whose default models accept image input on the chat surface we use.
@@ -72,12 +95,15 @@ _VISION_PROVIDERS = {"anthropic", "openai", "azure", "gemini"}
 
 
 def supports_vision() -> bool:
-    """True if the configured LLM provider/model can read an image (complete_vision)."""
-    p = config.LLM_PROVIDER
+    """True if the configured VISION provider/model can read an image. Checks the
+    VISION provider (VISION_PROVIDER, or LLM_PROVIDER when unset), so a text-only main
+    model (DeepSeek) can still get table-vision by pointing VISION_PROVIDER at a
+    multimodal one (e.g. openai / gpt-4.1-mini)."""
+    p = vision_provider()
     if p in _VISION_PROVIDERS:
         return True
     if p == "qwen":                       # only the qwen-vl-* line is multimodal
-        return "vl" in model_name().lower()
+        return "vl" in vision_model().lower()
     return False                          # deepseek (and anything else) — text only
 
 
@@ -146,22 +172,24 @@ def complete_vision(system: str, user: str, image_b64: str, want_json: bool = Tr
                     max_tokens: int = 4096) -> str:
     """Like complete(), but with a PNG image attached — for READING a table page.
 
-    `image_b64` is raw base64 of a PNG. Supported on the multimodal providers
-    (OpenAI / Azure gpt-4.1*, Gemini, Claude). Same rate-limit/retry path as complete().
+    `image_b64` is raw base64 of a PNG. Routed to the VISION provider (VISION_PROVIDER
+    / VISION_MODEL), which may differ from the main LLM_PROVIDER — so a text-only main
+    model (DeepSeek) keeps doing the bulk text work while images go to a multimodal one
+    (e.g. openai / gpt-4.1-mini). Same rate-limit/retry path as complete().
     """
-    _ensure_client()
-    model = model_name()
+    _ensure_vision_client()
+    model = vision_model()
     import ratelimit
-    provider = config.LLM_PROVIDER
+    provider = vision_provider()
 
-    if _kind == "anthropic":
+    if _vision_kind == "anthropic":
         content = [{"type": "text", "text": user},
                    {"type": "image", "source": {"type": "base64",
                     "media_type": "image/png", "data": image_b64}}]
         kwargs = dict(model=model, max_tokens=max_tokens, system=system,
                       temperature=config.LLM_TEMPERATURE,
                       messages=[{"role": "user", "content": content}])
-        msg = ratelimit.with_retry(lambda: _client.messages.create(**kwargs),
+        msg = ratelimit.with_retry(lambda: _vision_client.messages.create(**kwargs),
                                    provider=provider)
         return "".join(getattr(b, "text", "") for b in msg.content
                        if getattr(b, "type", "") == "text")
@@ -176,5 +204,5 @@ def complete_vision(system: str, user: str, image_b64: str, want_json: bool = Tr
     if want_json:
         kwargs["response_format"] = {"type": "json_object"}
     resp = ratelimit.with_retry(
-        lambda: _client.chat.completions.create(**kwargs), provider=provider)
+        lambda: _vision_client.chat.completions.create(**kwargs), provider=provider)
     return resp.choices[0].message.content or ""

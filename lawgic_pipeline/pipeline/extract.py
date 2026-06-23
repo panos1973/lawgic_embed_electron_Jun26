@@ -173,10 +173,11 @@ def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
             if not llm.supports_vision():
                 # e.g. DeepSeek is text-only — attempting vision just fires a doomed,
                 # retried 400 ("unknown variant image_url") per page. Skip once and
-                # keep the extracted text.
+                # keep the extracted text. Set VISION_PROVIDER/VISION_MODEL to a
+                # multimodal model (e.g. openai / gpt-4.1-mini) to enable it.
                 warnings.append(
-                    f"table vision skipped: LLM provider '{config.LLM_PROVIDER}' has no "
-                    f"image input — {len(upgrade_pages)} page(s) kept as extracted text")
+                    f"table vision skipped: vision provider '{llm.vision_provider()}' has "
+                    f"no image input — {len(upgrade_pages)} page(s) kept as extracted text")
             else:
                 from pipeline.table_vision import read_page_vision
                 for pg in upgrade_pages:

@@ -63,6 +63,17 @@ AMEND_EXTRACTOR = os.environ.get("AMEND_EXTRACTOR", "deterministic")  # determin
 # OR photocopied). Runs ONLY on detected table pages; needs an LLM key (e.g. gpt-4.1-mini).
 TABLE_VISION = os.environ.get("TABLE_VISION", "off").lower() in ("on", "true", "1")
 
+# Optional DEDICATED provider/model for the table/figure IMAGE reads only. The main
+# LLM_PROVIDER may be text-only (e.g. DeepSeek V4, which rejects image input): set
+# these to route ONLY complete_vision() to a multimodal model (e.g. openai /
+# gpt-4.1-mini) while the bulk text work (enrich + amend over every provision) stays
+# cheap on LLM_PROVIDER. Blank VISION_PROVIDER -> reuse LLM_PROVIDER (prior behavior).
+# The vision provider authenticates with ITS provider's existing key (openai ->
+# OPENAI_API_KEY); no new key name. Vision pages are a tiny fraction of the corpus, so
+# the added spend is negligible. Still gated by TABLE_VISION.
+VISION_PROVIDER = os.environ.get("VISION_PROVIDER", "")   # blank -> LLM_PROVIDER
+VISION_MODEL = os.environ.get("VISION_MODEL", "")         # blank -> that provider's default
+
 # sdk: which client. base_url: OpenAI-compatible endpoint (None = native). key: config attr.
 PROVIDERS = {
     "anthropic": {"sdk": "anthropic", "base_url": None,
