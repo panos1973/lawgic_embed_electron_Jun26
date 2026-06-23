@@ -145,6 +145,18 @@ LLM_CONCURRENCY = _int_env("LLM_CONCURRENCY", 8)
 VOYAGE_RPM = _float_env("VOYAGE_RPM")     # voyage-context-3 embedding requests/min
 LLM_RPM = _float_env("LLM_RPM")           # enrichment LLM (LLM_PROVIDER) requests/min
 
+# Per-request network timeout (seconds) for the LLM + Voyage SDK clients. Their
+# defaults are uniformly LONG (OpenAI/Anthropic 600s; Voyage falls back to 600s) AND
+# the SDKs retry internally (OpenAI defaults to max_retries=2), so one stalled call can
+# block a worker for many minutes — up to ~30 min — before it even raises. On a long
+# parallel run a few stalled sockets freeze every worker that way: nothing has raised
+# yet, so our retry/pause machinery hasn't fired and the UI just sits on "ingesting"
+# with no progress (it looks dead). Bounding the per-attempt time — paired with
+# max_retries=0 so OUR with_retry owns retries — makes a stalled call fail fast, then
+# retry with visible backoff, then escalate to a clean PAUSE if it's systemic. Generous
+# enough that no legitimate single call (incl. an 8k-token amendment extraction) hits it.
+NET_TIMEOUT = _float_env("NET_TIMEOUT") or 180.0
+
 
 def require(*names: str) -> None:
     """Fail fast if required secrets are missing."""
