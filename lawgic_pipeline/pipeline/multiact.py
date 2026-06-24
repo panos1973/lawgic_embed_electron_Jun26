@@ -154,17 +154,20 @@ def split_acts(text: str, masthead: dict) -> list[ActSegment]:
                            issuer="", title=mh.get("title", ""), text=text,
                            is_decision=True)]
 
-    # Untyped FEK Α΄ (the primary-legislation tier) with valid gazette coordinates: the
-    # masthead regexes couldn't read the instrument type (an unusual header layout, or a
-    # type we don't pattern-match), but it IS a real primary act. Emit it as ONE untyped,
-    # non-decision act so the caller's LLM identification fallback (_llm_identify) can
-    # read the document and name the type — instead of dropping a genuine law to review
-    # unseen. (FEK Β΄ is the decision tier, handled above; an untyped Β΄ with no act
-    # structure is a stray reference and still falls through to review.)
-    if mh.get("fek_series") == "Α" and mh.get("fek_number") and mh.get("year"):
+    # Untyped page with valid gazette coordinates: the masthead regexes couldn't read
+    # the instrument type (an unusual header layout, or a type we don't pattern-match),
+    # but it IS a real gazette act. Emit it as ONE untyped act so the caller's LLM
+    # identification fallback (_llm_identify) can read the document and name the type —
+    # instead of dropping a genuine instrument to review unseen. The whole page becomes
+    # ONE act (never split on a stray "Αριθμ."); the tier sets is_decision (Α΄ = primary
+    # legislation -> a NUM/YEAR or dated id; Β΄/Γ΄/Δ΄ = a decision -> a gazette-coordinate
+    # id). A page the LLM genuinely can't place still routes to review (it returns no type).
+    series = mh.get("fek_series")
+    if series and mh.get("fek_number") and mh.get("year"):
         return [ActSegment(instrument_type=mtype, number="", item=None, issuer="",
-                           title=mh.get("title", ""), text=text, is_decision=False)]
+                           title=mh.get("title", ""), text=text,
+                           is_decision=(series != "Α"))]
 
-    # No identifiable act structure at all: nothing to split — return empty so the
-    # caller routes the document to review.
+    # No FEK coordinates at all (not even a gazette page): nothing to identify — return
+    # empty so the caller routes the document to review.
     return []

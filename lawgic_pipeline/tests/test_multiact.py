@@ -149,30 +149,38 @@ def test_unclassified_decision_gazette_single_act_fallback():
     assert acts[0].text == txt                     # whole gazette is the one instrument
 
 
-def test_stray_arithm_without_index_or_issuer_skipped():
-    # No ΑΠΟΦΑΣΕΙΣ/ΠΕΡΙΕΧΟΜΕΝΑ gazette structure -> a bare "Αριθμ." in loose text is a
-    # stray reference, not an act: stays unsplit (review), even with valid coords.
+def test_untyped_page_with_coords_emits_one_act_for_llm_fallback():
+    # An untyped gazette page (masthead type the regex couldn't read) WITH valid
+    # coordinates must NOT be dropped to review unseen: split_acts emits ONE untyped act
+    # so the orchestrator's LLM identification fallback can name it. The tier sets
+    # is_decision (Α΄ primary legislation vs Β΄ decision); type resolution is the LLM's job.
+    txt = ("Κείμενο πράξης χωρίς αναγνωρίσιμη κεφαλίδα τύπου.\n"
+           "Άρθρο 1\nΑντικείμενο\nΟι διατάξεις ισχύουν.\n")
+    a = split_acts(txt, {"instrument_type": None, "fek_series": "Α",
+                         "fek_number": "35", "year": 2026})
+    assert len(a) == 1 and a[0].instrument_type is None and a[0].is_decision is False
+    b = split_acts(txt, {"instrument_type": None, "fek_series": "Β",
+                         "fek_number": "3207", "year": 2026})
+    assert len(b) == 1 and b[0].instrument_type is None and b[0].is_decision is True
+    assert b[0].text == txt
+
+
+def test_untyped_page_without_coords_routes_to_review():
+    # No FEK coordinates at all -> not even a gazette page -> nothing to identify -> [].
+    assert split_acts("κείμενο χωρίς ταυτότητα\n",
+                      {"instrument_type": None, "fek_series": "",
+                       "fek_number": "", "year": None}) == []
+
+
+def test_stray_arithm_not_split_into_bogus_acts():
+    # A bare "Αριθμ." with no issuer/index must never be SPLIT into a (mislabeled) act.
+    # With valid coords the whole page is emitted as ONE untyped act for the LLM to judge
+    # (a genuine instrument gets typed; a true non-instrument returns no type -> review).
+    # The invariant under test: it is ONE act, never split on the stray reference.
     acts = split_acts("κείμενο\nΑριθμ. 123\nχωρίς εκδότη ή δείκτη\n",
                       {"instrument_type": None, "fek_series": "Β",
                        "fek_number": "1", "year": 2025})
-    assert acts == []
-
-
-def test_untyped_fek_a_emits_one_act_for_llm_fallback():
-    # A FEK Α΄ primary act whose masthead type the regexes couldn't read must NOT be
-    # dropped to review unseen: split_acts emits ONE untyped, non-decision act so the
-    # orchestrator's LLM identification fallback gets a chance to name it.
-    txt = ("Κείμενο νόμου χωρίς αναγνωρίσιμη κεφαλίδα τύπου.\n"
-           "Άρθρο 1\nΑντικείμενο\nΟι διατάξεις ισχύουν.\n")
-    acts = split_acts(txt, {"instrument_type": None, "fek_series": "Α",
-                            "fek_number": "35", "year": 2026})
-    assert len(acts) == 1
-    assert acts[0].instrument_type is None        # unknown -> LLM fallback will type it
-    assert acts[0].is_decision is False
-    assert acts[0].text == txt
-    # but an untyped FEK Β΄ with no act structure still goes to review (stray ref)
-    assert split_acts(txt, {"instrument_type": None, "fek_series": "Β",
-                            "fek_number": "1", "year": 2026}) == []
+    assert len(acts) == 1 and acts[0].instrument_type is None
 
 
 def test_decision_id_helpers():
