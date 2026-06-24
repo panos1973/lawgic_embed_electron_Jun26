@@ -143,6 +143,14 @@ _PROMULGATION = re.compile(
     r".*\Z", re.IGNORECASE | re.DOTALL)
 
 
+# National Printing House column stamp: a lone Latin "E" (the printer's mark at the
+# top of each gazette column), optionally followed by the page number ("E  5666"), on
+# its own line. It leaks through two-column reconstruction and, on a doc with no Άρθρο
+# structure, otherwise becomes its own junk chunk ("E 5666"). A lone Latin E is never
+# real Greek body text (Greek enumeration uses Ε.), so dropping the line is safe.
+_PAGE_STAMP = re.compile(r"(?m)^[ \t]*E[ \t]*\d{0,6}[ \t]*$")
+
+
 def strip_furniture(text: str) -> str:
     if not text:
         return text
@@ -152,6 +160,7 @@ def strip_furniture(text: str) -> str:
     text = _RUN_HEADER.sub("", text)
     text = _ISSUE_STAMP.sub(" ", text)        # lone "Τεύχος A' 9/19.01.2024" stamps
     text = _HEADER_FRAG.sub("", text)         # lone masthead-word lines (± page no.)
+    text = _PAGE_STAMP.sub("", text)          # lone "E 5666" printer column stamps
     text = _BARCODE.sub("", text)
     # collapse the blank lines the removals leave behind
     text = re.sub(r"[ \t]+", " ", text)

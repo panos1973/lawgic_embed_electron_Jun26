@@ -687,10 +687,10 @@ def assemble_article_timeline(client, tenant: str = None) -> dict:
 
         flat_base = (dict(base_flat.properties) if base_flat else
                      {"canonical_id": aid, "law_number": _target_law_number(aid),
-                      "article_number": _target_article(aid)})
+                      "article_number": _target_article(aid), "chunk_type": "article"})
         art_base = (dict(base_art.properties) if base_art else
                     {"canonical_id": aid, "document_law_number": _target_law_number(aid),
-                     "article_number": _target_article(aid)})
+                     "article_number": _target_article(aid), "chunk_type": "article"})
 
         if base_art is not None:
             cur_text = base_art.properties.get("chunk_text") or ""

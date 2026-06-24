@@ -761,6 +761,12 @@ def test_whole_article_add_seeds_new_article_in_ingested_law(monkeypatch):
     seeded = c.store["Jun2026LawArticle"][
         wio._art_version_uuid("ν.4412/2016#αρ.15Α", "2024-04-01T00:00:00Z")]
     assert seeded["chunk_text"] == "νέο άρθρο 15Α" and seeded["is_current"] is True
+    # a seeded article must carry chunk_type='article' (else it lands as a null-type
+    # stub that retrieval can't filter as an article)
+    assert seeded.get("chunk_type") == "article"
+    seeded_flat = c.store["Jun2026GRLegaDocs"][
+        wio._flat_version_uuid("ν.4412/2016#αρ.15Α", "2024-04-01T00:00:00Z")]
+    assert seeded_flat.get("chunk_type") == "article"
 
 
 # --- Browse inspectors: list_laws + fetch_law_objects -----------------------
