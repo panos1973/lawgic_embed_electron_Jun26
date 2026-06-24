@@ -1,0 +1,32 @@
+name: Tests
+
+# Fast PR gate: runs the pipeline unit tests (fully stubbed — no network, no
+# secrets) on every pull request and on pushes to main. The heavier Windows
+# PyInstaller freeze + Electron build stays in build-and-release.yml, which only
+# fires on a published release / manual dispatch.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lawgic_pipeline
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Run unit tests (no network)
+        run: python -m pytest tests/ -q
