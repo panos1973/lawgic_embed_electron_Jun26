@@ -139,6 +139,30 @@ def test_strip_azure_page_comments():
     assert "Η ισχύς αρχίζει." in out and "Άρθρο 42 Επόμενο." in out
 
 
+def test_et_footer_page_detector_matches_boilerplate_not_body():
+    # the footer-page detector (used to skip a doomed/ wasteful vision call on the
+    # National Printing House boilerplate) must fire on that footer and NOT on a
+    # provision body that merely mentions the Printing House.
+    from pipeline.extract import _ET_FOOTER_PAGE
+    footer = ("Το Εθνικό Τυπογραφείο ... ΚΑΠΟΔΙΣΤΡΙΟΥ 34 ... feksales@et.gr ... www.et.gr")
+    assert _ET_FOOTER_PAGE.search(footer)
+    body = ("Άρθρο 8\nΟι αρμοδιότητες ανατίθενται στο Εθνικό Τυπογραφείο για την "
+            "εξυπηρέτηση του κοινού.")
+    assert not _ET_FOOTER_PAGE.search(body)          # body mention -> not the footer
+
+
+def test_strip_printer_column_page_stamps():
+    # the Latin "E" column mark (± page number) leaks through column reconstruction
+    # and otherwise becomes its own junk chunk ("E 5666"); it must be dropped, while
+    # real body text and Greek enumeration "Ε." are untouched.
+    body = ("Άρθρο 1 Αντικείμενο.\nE  5666\nΗ διάταξη ισχύει.\nE\n"
+            "Ε. Οι λοιπές περιπτώσεις.\nΤέλος.")
+    out = strip_furniture(body)
+    assert "5666" not in out
+    assert "Η διάταξη ισχύει." in out and "Άρθρο 1 Αντικείμενο." in out
+    assert "Ε. Οι λοιπές περιπτώσεις." in out          # Greek Ε. enumeration kept
+
+
 def test_strip_promulgation_and_signature_trailer():
     """The closing promulgation order, the ministers' signatures, the Μεγάλη Σφραγίδα
     attestation and the Εθνικό Τυπογραφείο footer must be stripped — otherwise they

@@ -20,10 +20,19 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from dataclasses import dataclass, field
 
 import config
 from pipeline.masthead import parse_masthead
+
+# The standard National Printing House back-page boilerplate (pricing + contact info).
+# It is detected as a "table" (the pricing list), so with TABLE_VISION on it would burn
+# one vision call per document transcribing furniture that strip_furniture discards
+# anyway. These markers appear ONLY in that footer — never in provision body prose — so
+# a page carrying one is the boilerplate page and is skipped from the vision pass.
+_ET_FOOTER_PAGE = re.compile(
+    r"feksales@et\.gr|www\.et\.gr|ΚΑΠΟΔΙΣΤΡΙΟΥ\s+34|ΕΞΥΠΗΡΕΤΗΣΗ\s+ΚΟΙΝΟΥ")
 
 
 @dataclass
@@ -181,6 +190,11 @@ def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
             else:
                 from pipeline.table_vision import read_page_vision
                 for pg in upgrade_pages:
+                    # the National Printing House boilerplate footer is detected as a
+                    # table but is pure furniture — don't spend a vision call on it.
+                    if 1 <= pg <= len(pages_markdown) and \
+                            _ET_FOOTER_PAGE.search(pages_markdown[pg - 1] or ""):
+                        continue
                     r, why = read_page_vision(path, pg)
                     if r and 1 <= pg <= len(pages_markdown):
                         pages_markdown[pg - 1] = r
