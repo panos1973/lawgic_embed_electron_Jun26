@@ -24,6 +24,9 @@ _kind = None
 _vision_client = None
 _vision_kind = None
 _vision_for = None        # which provider the cached vision client was built for
+_classify_client = None
+_classify_kind = None
+_classify_for = None      # which provider the cached identification client was built for
 
 
 def _make_client(provider: str):
@@ -67,6 +70,16 @@ def _ensure_vision_client():
         _vision_for = prov
 
 
+def _ensure_classify_client():
+    """Lazily build the client for the identification provider (CLASSIFY_PROVIDER, or
+    the main LLM_PROVIDER when unset). Cached, rebuilt if the provider changes."""
+    global _classify_client, _classify_kind, _classify_for
+    prov = classify_provider()
+    if _classify_client is None or _classify_for != prov:
+        _classify_client, _classify_kind = _make_client(prov)
+        _classify_for = prov
+
+
 def model_name() -> str:
     spec = config.PROVIDERS[config.LLM_PROVIDER]
     return config.LLM_MODEL or spec["default_model"]
@@ -77,10 +90,10 @@ def model_name() -> str:
 # with a hard 400 ("unknown variant image_url"), so table-vision must skip it (or
 # route to a different provider) instead of firing a doomed, retried call per page.
 _VISION_PROVIDERS = {"anthropic", "openai", "azure", "gemini"}
-# Sensible multimodal default per vision provider when none is given explicitly.
-# For azure this is the DEPLOYMENT name — name your Azure OpenAI deployment to match
-# (or set VISION_MODEL). gpt-4.1-mini is the cheap, capable table reader.
-_VISION_DEFAULT_MODEL = {"azure": "gpt-4.1-mini", "openai": "gpt-4.1-mini"}
+# Sensible default model when a VISION_/CLASSIFY_ provider is set without a model. For
+# azure this is the DEPLOYMENT name — name your Azure OpenAI deployment to match (or set
+# the *_MODEL var). gpt-4.1-mini is the cheap, capable reader/classifier.
+_OVERRIDE_DEFAULT_MODEL = {"azure": "gpt-4.1-mini", "openai": "gpt-4.1-mini"}
 
 
 def _provider_can_see(provider: str, model: str) -> bool:
@@ -120,7 +133,21 @@ def vision_model() -> str:
     # (e.g. LLM_MODEL=qwen-vl-max).
     if p == config.LLM_PROVIDER and config.LLM_MODEL:
         return config.LLM_MODEL
-    return _VISION_DEFAULT_MODEL.get(p, config.PROVIDERS[p]["default_model"])
+    return _OVERRIDE_DEFAULT_MODEL.get(p, config.PROVIDERS[p]["default_model"])
+
+
+def classify_provider() -> str:
+    """Provider for the identification fallback — CLASSIFY_PROVIDER if set, else main."""
+    return config.CLASSIFY_PROVIDER or config.LLM_PROVIDER
+
+
+def classify_model() -> str:
+    if config.CLASSIFY_MODEL:
+        return config.CLASSIFY_MODEL
+    p = classify_provider()
+    if p == config.LLM_PROVIDER and config.LLM_MODEL:   # same provider -> honour main model
+        return config.LLM_MODEL
+    return _OVERRIDE_DEFAULT_MODEL.get(p, config.PROVIDERS[p]["default_model"])
 
 
 def supports_vision() -> bool:
@@ -130,16 +157,27 @@ def supports_vision() -> bool:
     return _provider_can_see(vision_provider(), vision_model())
 
 
-def complete(system: str, user: str, want_json: bool = True,
-             max_tokens: int = 1024) -> str:
-    """Return the model's text output. `system` should be the STABLE prefix."""
+def _resolve_client(role: str):
+    """Return (client, kind, model, provider) for a call. role='classify' uses the
+    CLASSIFY_* provider when one is configured; every other role uses the main
+    LLM_PROVIDER. Keeps the bulk work (enrich/amend) on the cheap main model while a
+    rare identification call can go to a stronger one."""
+    if role == "classify" and config.CLASSIFY_PROVIDER:
+        _ensure_classify_client()
+        return _classify_client, _classify_kind, classify_model(), classify_provider()
     _ensure_client()
-    model = model_name()
+    return _client, _kind, model_name(), config.LLM_PROVIDER
+
+
+def complete(system: str, user: str, want_json: bool = True,
+             max_tokens: int = 1024, role: str = "main") -> str:
+    """Return the model's text output. `system` should be the STABLE prefix. `role`
+    selects the client: 'classify' may use CLASSIFY_PROVIDER, else the main model."""
+    client, kind, model, provider = _resolve_client(role)
 
     import ratelimit
-    provider = config.LLM_PROVIDER
 
-    if _kind == "anthropic":
+    if kind == "anthropic":
         kwargs = dict(model=model, max_tokens=max_tokens, system=system,
                       messages=[{"role": "user", "content": user}])
         if config.LLM_THINKING:
@@ -147,19 +185,19 @@ def complete(system: str, user: str, want_json: bool = True,
             kwargs["temperature"] = 1.0          # required when thinking is on
         else:
             kwargs["temperature"] = config.LLM_TEMPERATURE
-        msg = ratelimit.with_retry(lambda: _client.messages.create(**kwargs),
+        msg = ratelimit.with_retry(lambda: client.messages.create(**kwargs),
                                    provider=provider)
         return "".join(getattr(b, "text", "") for b in msg.content
                        if getattr(b, "type", "") == "text")
 
-    # openai-compatible (deepseek / gemini)
+    # openai-compatible (deepseek / gemini / openai / azure / qwen)
     kwargs = dict(model=model, max_tokens=max_tokens,
                   temperature=config.LLM_TEMPERATURE,
                   messages=[{"role": "system", "content": system},
                             {"role": "user", "content": user}])
     if want_json:
         kwargs["response_format"] = {"type": "json_object"}
-    if config.LLM_PROVIDER == "deepseek":
+    if provider == "deepseek":
         # DeepSeek V4: thinking is a per-request param; level via reasoning_effort.
         # Flash defaults non-thinking; Pro defaults thinking — so we set it explicitly.
         if config.LLM_THINKING:
@@ -167,7 +205,7 @@ def complete(system: str, user: str, want_json: bool = True,
             kwargs["reasoning_effort"] = config.LLM_REASONING_EFFORT
         else:
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
-    elif config.LLM_PROVIDER == "gemini":
+    elif provider == "gemini":
         # Gemini 2.5 Flash is a thinking model with reasoning ON by default. On the
         # OpenAI-compatible endpoint that reasoning is billed against the same
         # max_tokens budget as the answer, so on a tight extraction call (e.g. the
@@ -177,7 +215,7 @@ def complete(system: str, user: str, want_json: bool = True,
         budget = -1 if config.LLM_THINKING else 0   # -1 = dynamic (model decides)
         kwargs["extra_body"] = {
             "extra_body": {"google": {"thinking_config": {"thinking_budget": budget}}}}
-    elif config.LLM_PROVIDER == "qwen":
+    elif provider == "qwen":
         # Qwen3 (e.g. qwen-plus) is a hybrid thinking model. DashScope's
         # OpenAI-compatible endpoint toggles it via enable_thinking; we keep it OFF
         # for extraction (the pipeline default) so reasoning doesn't eat the budget.
@@ -187,7 +225,7 @@ def complete(system: str, user: str, want_json: bool = True,
     # "openai" (gpt-4.1 / gpt-4.1-mini): non-reasoning models — no thinking knob,
     # JSON mode already set above; nothing provider-specific to add.
     resp = ratelimit.with_retry(
-        lambda: _client.chat.completions.create(**kwargs), provider=provider)
+        lambda: client.chat.completions.create(**kwargs), provider=provider)
     return resp.choices[0].message.content or ""
 
 

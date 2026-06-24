@@ -59,7 +59,11 @@ def classify_instrument(text: str, complete=None) -> Optional[dict]:
     the document cannot be placed in our taxonomy. Raises SystemExit when no LLM key is
     configured (the caller treats that as 'fallback unavailable'). `complete` injectable."""
     if complete is None:
-        complete = llm.complete
+        # role='classify' lets this rare identification call use CLASSIFY_PROVIDER (e.g.
+        # gpt-4.1-mini) for sharper edge-case typing, while the bulk enrich/amend work
+        # stays on the cheap main model. Blank CLASSIFY_PROVIDER -> the main model.
+        def complete(system, user, **kw):
+            return llm.complete(system, user, role="classify", **kw)
     head = (text or "").strip()[:2500]
     if not head:
         return None

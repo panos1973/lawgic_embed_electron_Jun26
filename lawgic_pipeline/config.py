@@ -73,6 +73,16 @@ TABLE_VISION = os.environ.get("TABLE_VISION", "off").lower() in ("on", "true", "
 VISION_PROVIDER = os.environ.get("VISION_PROVIDER", "")   # blank -> auto-select
 VISION_MODEL = os.environ.get("VISION_MODEL", "")         # blank -> sensible default
 
+# Optional override for the RARE identification fallback (classify_llm: name a doc's
+# instrument type when the deterministic masthead parser can't). Like VISION_*: blank
+# CLASSIFY_PROVIDER -> reuse LLM_PROVIDER. Point it at a stronger model (e.g. azure /
+# gpt-4.1-mini) to sharpen edge-case typing WITHOUT paying that model for the bulk
+# per-provision enrichment + amendment work. It authenticates with that provider's own
+# existing key. The call fires only when a masthead can't be typed, so the added cost
+# is negligible even at corpus scale.
+CLASSIFY_PROVIDER = os.environ.get("CLASSIFY_PROVIDER", "")   # blank -> LLM_PROVIDER
+CLASSIFY_MODEL = os.environ.get("CLASSIFY_MODEL", "")         # blank -> sensible default
+
 # sdk: which client. base_url: OpenAI-compatible endpoint (None = native). key: config attr.
 PROVIDERS = {
     "anthropic": {"sdk": "anthropic", "base_url": None,
