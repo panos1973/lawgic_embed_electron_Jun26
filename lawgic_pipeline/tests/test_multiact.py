@@ -158,6 +158,23 @@ def test_stray_arithm_without_index_or_issuer_skipped():
     assert acts == []
 
 
+def test_untyped_fek_a_emits_one_act_for_llm_fallback():
+    # A FEK Α΄ primary act whose masthead type the regexes couldn't read must NOT be
+    # dropped to review unseen: split_acts emits ONE untyped, non-decision act so the
+    # orchestrator's LLM identification fallback gets a chance to name it.
+    txt = ("Κείμενο νόμου χωρίς αναγνωρίσιμη κεφαλίδα τύπου.\n"
+           "Άρθρο 1\nΑντικείμενο\nΟι διατάξεις ισχύουν.\n")
+    acts = split_acts(txt, {"instrument_type": None, "fek_series": "Α",
+                            "fek_number": "35", "year": 2026})
+    assert len(acts) == 1
+    assert acts[0].instrument_type is None        # unknown -> LLM fallback will type it
+    assert acts[0].is_decision is False
+    assert acts[0].text == txt
+    # but an untyped FEK Β΄ with no act structure still goes to review (stray ref)
+    assert split_acts(txt, {"instrument_type": None, "fek_series": "Β",
+                            "fek_number": "1", "year": 2026}) == []
+
+
 def test_decision_id_helpers():
     assert make_decision_id("Β", "913", 2025, 1) == "Β΄913/2025#1"
     assert make_decision_id("Β", "734", 2025, None) == "Β΄734/2025"
