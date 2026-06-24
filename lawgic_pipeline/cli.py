@@ -535,7 +535,11 @@ def cmd_retry():
     st.requeue_stale()
     client = wio.connect()
     try:
-        rows = st.pending()
+        # pending + error + REVIEW: a review doc is one the pipeline couldn't finish
+        # confidently (e.g. masthead unidentified). The Retry button lives on the
+        # Review tab, so it must re-run those too — otherwise it scans 0 files and
+        # looks like it did nothing.
+        rows = st.pending() + st.by_status("review")
         emit({"type": "scan", "folder": "(retry)", "total": len(rows)})
         if not JSON:
             print(f"Retrying {len(rows)} documents")

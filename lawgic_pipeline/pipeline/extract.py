@@ -189,11 +189,17 @@ def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
                             f"page vision: page {pg} not read ({why}); kept extracted text")
         text = "\n\n".join(m for m in pages_markdown if m)
 
-    # Masthead is parsed on the full text (it needs the cover block); the body
-    # text handed downstream then has the repeating page furniture stripped.
-    masthead = parse_masthead(text)
+    # Masthead is parsed on the document head, GLYPH-REPAIRED first: the headline
+    # "ΝΟΜΟΣ" (and Π.Δ., etc.) is frequently encoded with Latin homoglyphs
+    # ("NOMO"+Greek "Σ") that the all-Greek masthead regexes miss — which silently
+    # sent otherwise-fine laws to review (type=None). The normalize STAGE repairs the
+    # body downstream, but masthead identification happens here in extract, before
+    # that, so repair the head now. Homoglyph repair is char-for-char, so the regex
+    # offsets/title extraction are unaffected. The body text handed downstream still
+    # goes through strip_furniture (+ the full normalize stage) as before.
+    from pipeline.normalize import normalize_glyphs, strip_furniture
+    masthead = parse_masthead(normalize_glyphs(text[:4000]))
     warnings.extend(f"masthead: {w}" for w in masthead.get("warnings", []))
-    from pipeline.normalize import strip_furniture
     text = strip_furniture(text)
 
     return ExtractResult(

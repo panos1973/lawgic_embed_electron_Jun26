@@ -5,7 +5,22 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pipeline.masthead import parse_masthead  # noqa: E402
+from pipeline.normalize import normalize_glyphs  # noqa: E402
 from models import TYPE_NOMOS, TYPE_PD, TYPE_PNP  # noqa: E402
+
+
+def test_latin_homoglyph_masthead_identified_after_glyph_repair():
+    """A real-FEK gotcha: the headline ΝΟΜΟΣ is often encoded as Latin 'NOMO' + Greek
+    'Σ'. The all-Greek masthead regexes miss it raw (-> type=None -> review). extract.py
+    now glyph-repairs the head before parse_masthead; this proves that closes the gap."""
+    # N,O,M,O are Latin homoglyphs here; final Σ is Greek (so the token is "Greek-ish"
+    # and the repair fires). ΥΠ/ΑΡΙΘΜ kept Greek.
+    raw = ("ΕΦΗΜΕΡΙΔΑ ΤΗΣ ΚΥΒΕΡΝΗΣΕΩΣ\n26 Μαρτίου 2024  ΤΕΥΧΟΣ ΠΡΩΤΟ  Αρ. Φύλλου 52\n"
+           "NOMOΣ ΥΠ' ΑΡΙΘΜ. 5090\nΠοινικός Κώδικας.\n")
+    assert parse_masthead(raw)["instrument_type"] is None           # raw homoglyph -> missed
+    fixed = parse_masthead(normalize_glyphs(raw))
+    assert fixed["instrument_type"] == TYPE_NOMOS                   # repaired -> identified
+    assert fixed["number"] == 5090 and fixed["year"] == 2024
 
 
 # A realistic ΝΟΜΟΣ cover, modern spelling, number inline.
