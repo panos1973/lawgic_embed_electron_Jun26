@@ -22,7 +22,7 @@ from typing import Optional
 
 from models import (TYPE_NOMOS, TYPE_PD, TYPE_PNP, TYPE_YA, TYPE_KYA, TYPE_PSIFISMA,
                     TYPE_AN, TYPE_ND, TYPE_KANVOULIS, TYPE_KANAP, TYPE_APOF_DIOIK,
-                    TYPE_APOF_PERIF, TYPE_APOF_NPDD)
+                    TYPE_APOF_PERIF, TYPE_APOF_NPDD, TYPE_ANAKOINOSI)
 
 # Apostrophe / keraia variants that appear in "ΥΠ' ΑΡΙΘΜ." — match any or none.
 _APOS = r"['ʼ΄´’‘]?"
@@ -68,6 +68,13 @@ _TYPE_PATTERNS = [
     # Bare "Π.Δ." / "π.δ." fallback (rare in masthead but seen in inline refs).
     (TYPE_PD, re.compile(r"\bΠ\.?\s*Δ\.?\s*" + _ARITHM +
                          r"?\s*(?P<num>\d{1,5})", re.IGNORECASE)),
+    # FEK announcement / notice issue: a standalone "ΑΝΑΚΟΙΝΩΣΕΙΣ"/"ΑΝΑΚΟΙΝΩΣΗ" section
+    # header (e.g. an MFA notice that a ratified treaty entered into force). Anchored to
+    # its own line so a passing "ανακοινώσεις" in body prose never mis-types a law; it
+    # carries no NUM/YEAR, so the id is built from the gazette coordinates. Listed LAST
+    # so any real instrument header (which sits higher in the head) outranks it.
+    (TYPE_ANAKOINOSI, re.compile(r"^[ \t]*ΑΝΑΚΟΙΝΩΣ(?:ΕΙΣ|Η)\.?[ \t]*$",
+                                 re.IGNORECASE | re.MULTILINE)),
 ]
 
 # Types that legitimately carry no instrument number in the masthead (decisions,
@@ -75,6 +82,7 @@ _TYPE_PATTERNS = [
 _NUMBERLESS_TYPES = {
     TYPE_PNP, TYPE_YA, TYPE_KYA, TYPE_PSIFISMA, TYPE_KANVOULIS,
     TYPE_KANAP, TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD,
+    TYPE_ANAKOINOSI,
 }
 
 # Standalone number line, used when the type word and the number are on separate

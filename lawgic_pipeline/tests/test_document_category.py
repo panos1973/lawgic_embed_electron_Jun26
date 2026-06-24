@@ -11,7 +11,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pipeline.enrich import classify_document_category, DOCUMENT_CATEGORIES  # noqa: E402
 from models import (Law, Provision, TYPE_NOMOS, TYPE_PD, TYPE_YA, TYPE_KYA,  # noqa: E402
-                    TYPE_PNP, TYPE_PSIFISMA, TYPE_KANAP, TYPE_KANVOULIS)
+                    TYPE_PNP, TYPE_PSIFISMA, TYPE_KANAP, TYPE_KANVOULIS,
+                    TYPE_ANAKOINOSI)
+
+
+def test_anakoinosi_notice_category():
+    # a FEK announcement/notice is tagged with its own category (filterable, not UNKNOWN)
+    assert _cat(TYPE_ANAKOINOSI, "Θέση σε ισχύ της Συμφωνίας ...") == "ANAKOINOSI"
+    assert "ANAKOINOSI" in DOCUMENT_CATEGORIES
 
 
 def _law(itype, title, book="", part=""):

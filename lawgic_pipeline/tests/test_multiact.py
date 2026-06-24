@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pipeline.multiact import split_acts  # noqa: E402
 from models import (make_decision_id, make_decision_key, TYPE_NOMOS, TYPE_YA,  # noqa: E402
                     TYPE_KYA, TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD,
-                    TYPE_KANAP, TYPE_PNP, make_dated_instrument_id,
+                    TYPE_KANAP, TYPE_PNP, TYPE_ANAKOINOSI, make_dated_instrument_id,
                     make_dated_instrument_key, make_provision_id)
 
 
@@ -94,6 +94,17 @@ def test_primary_law_passthrough():
     assert len(acts) == 1
     assert acts[0].is_decision is False
     assert acts[0].instrument_type == TYPE_NOMOS
+
+
+def test_anakoinosi_notice_is_single_typed_act_with_dated_id():
+    # a notice issue (type already set by the masthead) is ONE act; its id comes from
+    # the gazette coordinates (Ανακ. Α΄36/2026), built deterministically — no LLM.
+    acts = split_acts("ΑΝΑΚΟΙΝΩΣΕΙΣ\nΘέση σε ισχύ της Συμφωνίας ...",
+                      {"instrument_type": TYPE_ANAKOINOSI, "fek_series": "Α",
+                       "fek_number": "36", "year": 2026, "title": "Θέση σε ισχύ"})
+    assert len(acts) == 1 and acts[0].is_decision is False
+    assert acts[0].instrument_type == TYPE_ANAKOINOSI
+    assert make_dated_instrument_id(TYPE_ANAKOINOSI, "Α", "36", 2026) == "Ανακ. Α΄36/2026"
 
 
 def test_multi_act_split_and_types():

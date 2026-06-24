@@ -285,7 +285,7 @@ DOCUMENT_CATEGORIES = {
     "NOMOS_SUBSTANTIVE", "PD_ORGANIZATIONAL", "PD_REGULATORY",
     "PD_CODIFICATION", "PD_AMENDMENT", "PD_ENFORCEMENT", "PNP", "PSIFISMA",
     "KYA", "YA_REGULATORY", "YA_INDIVIDUAL", "YA_ORGANIZATIONAL",
-    "EGKYKLIOS", "GNOMODOSIA", "UNKNOWN",
+    "EGKYKLIOS", "GNOMODOSIA", "ANAKOINOSI", "UNKNOWN",
 }
 
 
@@ -304,7 +304,8 @@ def classify_document_category(law: Law) -> Law:
     """
     from models import (TYPE_NOMOS, TYPE_AN, TYPE_ND, TYPE_PD, TYPE_PNP,
                         TYPE_YA, TYPE_KYA, TYPE_PSIFISMA, TYPE_KANAP,
-                        TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD)
+                        TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD,
+                        TYPE_ANAKOINOSI)
 
     folded = fold_for_bm25(law.title or "")
     # ΒΙΒΛΙΟ/ΜΕΡΟΣ deep hierarchy is only WEAK codification evidence: almost every
@@ -358,6 +359,8 @@ def classify_document_category(law: Law) -> Law:
             cat = "YA_REGULATORY"
         else:
             cat = "YA_INDIVIDUAL"
+    elif t == TYPE_ANAKOINOSI:
+        cat = "ANAKOINOSI"
     else:
         cat = "UNKNOWN"
 

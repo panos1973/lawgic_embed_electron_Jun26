@@ -6,7 +6,34 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pipeline.masthead import parse_masthead  # noqa: E402
 from pipeline.normalize import normalize_glyphs  # noqa: E402
-from models import TYPE_NOMOS, TYPE_PD, TYPE_PNP  # noqa: E402
+from models import TYPE_NOMOS, TYPE_PD, TYPE_PNP, TYPE_ANAKOINOSI  # noqa: E402
+
+
+# A real FEK Α΄ announcement issue: a MFA notice that a ratified treaty entered force.
+ANAKOINOSI = """ΕΦΗΜΕΡΙΔΑ ΤΗΣ ΚΥΒΕΡΝΗΣΕΩΣ
+ΤΗΣ ΕΛΛΗΝΙΚΗΣ ΔΗΜΟΚΡΑΤΙΑΣ
+11 Μαρτίου 2026 ΤΕΥΧΟΣ ΠΡΩΤΟ Αρ. Φύλλου 36
+ΑΝΑΚΟΙΝΩΣΕΙΣ
+Αριθμ. Φ.0544/Μ.7675/ΑΣ 10817
+Θέση σε ισχύ της Συμφωνίας ... που κυρώθηκαν με τον ν. 5074/2023 (Α΄ 205).
+"""
+
+
+def test_anakoinosi_notice_typed_from_standalone_header():
+    r = parse_masthead(ANAKOINOSI)
+    assert r["instrument_type"] == TYPE_ANAKOINOSI
+    assert r["number"] is None                       # a notice carries no NUM/YEAR
+    assert r["fek_series"] == "Α" and r["fek_number"] == "36" and r["year"] == 2026
+    assert "instrument number not found" not in r["warnings"]   # numberless -> no warning
+
+
+def test_anakoinosi_body_mention_does_not_mistype_a_law():
+    # a real ΝΟΜΟΣ whose body merely mentions "ανακοινώσεις" stays NOMOS — the
+    # ΑΝΑΚΟΙΝΩΣΕΙΣ pattern only matches a STANDALONE header line, and the ΝΟΜΟΣ header
+    # sits earlier anyway.
+    txt = ("ΝΟΜΟΣ ΥΠ' ΑΡΙΘΜ. 5090\nΠοινικός Κώδικας.\n"
+           "Άρθρο 1\nΟι σχετικές ανακοινώσεις δημοσιεύονται στον τύπο.\n")
+    assert parse_masthead(txt)["instrument_type"] == TYPE_NOMOS
 
 
 def test_latin_homoglyph_masthead_identified_after_glyph_repair():

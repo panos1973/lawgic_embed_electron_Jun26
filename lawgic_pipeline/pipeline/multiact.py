@@ -27,10 +27,14 @@ from typing import Optional
 
 from models import (TYPE_NOMOS, TYPE_PD, TYPE_PNP, TYPE_AN, TYPE_ND,
                     TYPE_PSIFISMA, TYPE_KANVOULIS, TYPE_YA, TYPE_KYA,
-                    TYPE_KANAP, TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD)
+                    TYPE_KANAP, TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD,
+                    TYPE_ANAKOINOSI)
 
+# Types whose gazette issue is ONE act with its identity already in the masthead (no
+# Αριθμ.-header splitting). ANAKOINOSI (a notice issue) is one act too — its id comes
+# from the FEK coordinates.
 PRIMARY_TYPES = {TYPE_NOMOS, TYPE_PD, TYPE_PNP, TYPE_AN, TYPE_ND,
-                 TYPE_PSIFISMA, TYPE_KANVOULIS}
+                 TYPE_PSIFISMA, TYPE_KANVOULIS, TYPE_ANAKOINOSI}
 
 # Act header: "Αριθμ. <num>" optionally followed by the ΠΕΡΙΕΧΟΜΕΝΑ item "(n)".
 # The number is alphanumeric/composite (Φ.1413/ΑΣ6519, 12/101, Ε-142/2025, 5332).
