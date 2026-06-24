@@ -149,3 +149,63 @@ def test_vision_routes_to_separate_provider(monkeypatch):
     assert calls["model"] == "gpt-4.1-mini"        # used the vision model
     parts = calls["messages"][-1]["content"]       # image rode along as an image_url
     assert any(p.get("type") == "image_url" for p in parts)
+
+
+def _fake_openai_client(calls):
+    class _Comp:
+        def create(self, **k):
+            calls.update(k)
+            msg = type("M", (), {"content": '{"type": "ΝΟΜΟΣ", "number": 5090}'})()
+            return type("R", (), {"choices": [type("C", (), {"message": msg})()]})()
+
+    class _Client:
+        chat = type("Chat", (), {"completions": _Comp()})()
+    return _Client()
+
+
+def test_complete_classify_role_routes_to_classify_provider(monkeypatch):
+    # role='classify' uses CLASSIFY_PROVIDER (e.g. azure/gpt-4.1-mini) while the bulk
+    # work stays on the main model.
+    monkeypatch.setattr(config, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(config, "CLASSIFY_PROVIDER", "azure")
+    monkeypatch.setattr(config, "CLASSIFY_MODEL", "gpt-4.1-mini")
+    monkeypatch.setattr(llm, "_classify_client", None)
+    monkeypatch.setattr(llm, "_classify_for", None)
+    assert llm.classify_provider() == "azure" and llm.classify_model() == "gpt-4.1-mini"
+
+    calls, built = {}, {}
+    monkeypatch.setattr(llm, "_make_client",
+                        lambda p: (built.update(provider=p) or _fake_openai_client(calls), "openai"))
+    llm.complete("sys", "user", role="classify")
+    assert built["provider"] == "azure"            # built the classify provider's client
+    assert calls["model"] == "gpt-4.1-mini"
+    # deepseek/gemini/qwen thinking knobs must NOT leak onto the azure call
+    assert "extra_body" not in calls
+
+
+def test_complete_classify_role_falls_back_to_main_when_unset(monkeypatch):
+    monkeypatch.setattr(config, "CLASSIFY_PROVIDER", "")     # no override -> main model
+    monkeypatch.setattr(config, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(config, "LLM_MODEL", "deepseek-v4-flash")
+    monkeypatch.setattr(llm, "_client", None)
+    monkeypatch.setattr(llm, "_kind", None)
+    assert llm.classify_provider() == "deepseek"
+    calls, built = {}, {}
+    monkeypatch.setattr(llm, "_make_client",
+                        lambda p: (built.update(provider=p) or _fake_openai_client(calls), "openai"))
+    llm.complete("sys", "user", role="classify")
+    assert built["provider"] == "deepseek"          # fell back to the main provider
+
+
+def test_classify_instrument_uses_classify_role(monkeypatch):
+    import pipeline.classify_llm as cl
+    from models import TYPE_NOMOS
+    seen = {}
+
+    def fake_complete(system, user, want_json=True, max_tokens=1024, role="main"):
+        seen["role"] = role
+        return '{"type": "ΝΟΜΟΣ", "number": 5090}'
+    monkeypatch.setattr(cl.llm, "complete", fake_complete)
+    r = cl.classify_instrument("ΝΟΜΟΣ ΥΠ' ΑΡΙΘΜ. 5090 ...")
+    assert seen["role"] == "classify"               # the rare ID call is routed to classify
+    assert r["instrument_type"] == TYPE_NOMOS and r["number"] == 5090
