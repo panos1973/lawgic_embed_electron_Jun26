@@ -154,6 +154,17 @@ def split_acts(text: str, masthead: dict) -> list[ActSegment]:
                            issuer="", title=mh.get("title", ""), text=text,
                            is_decision=True)]
 
+    # Untyped FEK Α΄ (the primary-legislation tier) with valid gazette coordinates: the
+    # masthead regexes couldn't read the instrument type (an unusual header layout, or a
+    # type we don't pattern-match), but it IS a real primary act. Emit it as ONE untyped,
+    # non-decision act so the caller's LLM identification fallback (_llm_identify) can
+    # read the document and name the type — instead of dropping a genuine law to review
+    # unseen. (FEK Β΄ is the decision tier, handled above; an untyped Β΄ with no act
+    # structure is a stray reference and still falls through to review.)
+    if mh.get("fek_series") == "Α" and mh.get("fek_number") and mh.get("year"):
+        return [ActSegment(instrument_type=mtype, number="", item=None, issuer="",
+                           title=mh.get("title", ""), text=text, is_decision=False)]
+
     # No identifiable act structure at all: nothing to split — return empty so the
     # caller routes the document to review.
     return []
