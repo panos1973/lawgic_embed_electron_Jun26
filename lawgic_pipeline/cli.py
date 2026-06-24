@@ -15,6 +15,7 @@ import argparse
 import glob
 import json
 import os
+import signal
 import sys
 import time
 
@@ -182,6 +183,25 @@ def cmd_ingest(folder: str):
         done_n = [0]
         stop = threading.Event()       # set on the first fatal -> no new files start
         fatal = {}                     # the first fatal's provider/stage/doc/detail
+
+        # Cancel = GRACEFUL DRAIN, not a hard kill. The UI's Cancel sends SIGTERM; we
+        # catch it (and Ctrl-C / SIGINT) and just set `stop`, which makes _run_group
+        # cancel not-yet-started files but let the IN-FLIGHT documents finish to a clean
+        # 'done' (pool.shutdown(wait=True)). So a cancel never leaves a law half-embedded
+        # — every doc is either fully done or untouched ('pending'), and a later run
+        # resumes the untouched ones. (Without this handler SIGTERM killed the process
+        # mid-document.)
+        def _on_cancel(signum, _frame):
+            if not stop.is_set():
+                emit({"type": "stage", "doc": "", "stage": "cancel",
+                      "msg": "cancel received — finishing the in-flight document(s) "
+                             "cleanly; no new ones will start"})
+                stop.set()
+        for _sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(_sig, _on_cancel)
+            except (ValueError, OSError):   # not main thread / unsupported -> skip
+                pass
 
         def _one(path):
             if stop.is_set():
