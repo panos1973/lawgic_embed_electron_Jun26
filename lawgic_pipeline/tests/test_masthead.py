@@ -6,7 +6,32 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pipeline.masthead import parse_masthead  # noqa: E402
 from pipeline.normalize import normalize_glyphs  # noqa: E402
-from models import TYPE_NOMOS, TYPE_PD, TYPE_PNP, TYPE_ANAKOINOSI  # noqa: E402
+from models import TYPE_NOMOS, TYPE_PD, TYPE_PNP, TYPE_ANAKOINOSI, TYPE_PYS  # noqa: E402
+
+
+PYS = """ΕΦΗΜΕΡΙΔΑ ΤΗΣ ΚΥΒΕΡΝΗΣΕΩΣ
+ΤΗΣ ΕΛΛΗΝΙΚΗΣ ΔΗΜΟΚΡΑΤΙΑΣ
+14 Φεβρουαρίου 2025 ΤΕΥΧΟΣ ΠΡΩΤΟ Αρ. Φύλλου 20
+ΠΡΑΞΕΙΣ ΥΠΟΥΡΓΙΚΟΥ ΣΥΜΒΟΥΛΙΟΥ
+Πράξη: 1 της 10.1.2025
+ΤΟ ΥΠΟΥΡΓΙΚΟ ΣΥΜΒΟΥΛΙΟ
+"""
+
+
+def test_praxi_ypourgikou_symvouliou_typed():
+    r = parse_masthead(PYS)
+    assert r["instrument_type"] == TYPE_PYS                       # Act of the Cabinet
+    assert r["fek_series"] == "Α" and r["fek_number"] == "20" and r["year"] == 2025
+    assert "instrument number not found" not in r["warnings"]     # numberless -> no warning
+
+
+def test_pys_genitive_citation_does_not_mistype_a_law():
+    # a ΝΟΜΟΣ that cites «της Πράξης Υπουργικού Συμβουλίου» in its body stays NOMOS:
+    # the Π.Υ.Σ. pattern matches ΠΡΑΞΗ/ΠΡΑΞΕΙΣ but NOT the genitive ΠΡΑΞΗΣ, and the real
+    # ΝΟΜΟΣ header sits earlier anyway.
+    txt = ("ΝΟΜΟΣ ΥΠ' ΑΡΙΘΜ. 5090\nΠοινικός Κώδικας.\n"
+           "Άρθρο 1\nΚατ' εφαρμογήν της Πράξης Υπουργικού Συμβουλίου 8/2011.\n")
+    assert parse_masthead(txt)["instrument_type"] == TYPE_NOMOS
 
 
 # A real FEK Α΄ announcement issue: a MFA notice that a ratified treaty entered force.
