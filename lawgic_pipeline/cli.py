@@ -116,6 +116,32 @@ def _group_by_subfolder(root: str, pdfs: list) -> list:
     return [("(root)" if k == "." else k, groups[k]) for k in sorted(groups)]
 
 
+def _process_capped(doc_id, st, fn):
+    """Run fn() (one orchestrator.process_document call) under config.DOC_TIMEOUT so a
+    single hung document — a malformed/oversized PDF that wedges the native PDF parser,
+    or a stuck long-poll no per-call timeout catches — can't stall the whole run (a
+    serial retry would otherwise block forever on the first one). On timeout the doc is
+    parked back in review and the abandoned worker is left to unwind; the run proceeds."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FTimeout
+    import logsetup
+    to = max(60, int(getattr(config, "DOC_TIMEOUT", 1500)))
+    ex = ThreadPoolExecutor(max_workers=1)
+    try:
+        return ex.submit(fn).result(timeout=to)
+    except _FTimeout:
+        logsetup.get("cli").warning("doc %s exceeded %ds — parking to review, moving on",
+                                    doc_id, to)
+        try:
+            st.set_status(doc_id, "review", stage="extract",
+                          error=f"timed out after {to}s — possibly a malformed or oversized "
+                                "PDF that wedged the parser; skipped, inspect manually")
+        except Exception:                              # noqa: BLE001
+            pass
+        return "timeout"
+    finally:
+        ex.shutdown(wait=False)
+
+
 def cmd_ingest(folder: str):
     import weaviate_io as wio
     import orchestrator
@@ -213,7 +239,8 @@ def cmd_ingest(folder: str):
                 _human(stage, msg)
                 emit({"type": "stage", "doc": _n, "stage": stage, "msg": msg})
             try:
-                status = orchestrator.process_document(worker_client(), st, path, progress)
+                status = _process_capped(name, st, lambda: orchestrator.process_document(
+                    worker_client(), st, path, progress))
             except orchestrator.FatalIngestError as fe:
                 # credential/endpoint failure: stop the whole run (first one wins).
                 # process_document already released this doc to 'pending' for resume.
@@ -572,7 +599,8 @@ def cmd_retry():
                 emit({"type": "stage", "doc": _n, "stage": stage, "msg": msg})
 
             try:
-                status = orchestrator.process_document(client, st, r["path"], progress)
+                status = _process_capped(name, st, lambda: orchestrator.process_document(
+                    client, st, r["path"], progress))
             except orchestrator.FatalIngestError as fe:
                 emit({"type": "fatal", "provider": fe.provider, "stage": fe.stage,
                       "doc": name, "detail": fe.detail})
