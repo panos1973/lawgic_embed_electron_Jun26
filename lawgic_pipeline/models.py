@@ -21,19 +21,22 @@ TYPE_APOF_PERIF, TYPE_APOF_NPDD = "APOFASI_PERIF", "APOFASI_NPDD"
 # ratified treaty entered into force). Not normative legislation, but published in the
 # gazette and legally relevant (entry-into-force facts), so captured + tagged distinctly.
 TYPE_ANAKOINOSI = "ANAKOINOSI"
+# Act of the Cabinet / Council of Ministers (ΠΡΑΞΗ ΥΠΟΥΡΓΙΚΟΥ ΣΥΜΒΟΥΛΙΟΥ, "Π.Υ.Σ."),
+# published in FEK Α΄ — normative, but its own instrument family (not a ν./π.δ.).
+TYPE_PYS = "PYS"
 
 _PREFIX_DISPLAY = {TYPE_NOMOS: "ν.", TYPE_PD: "π.δ.", TYPE_PNP: "Π.Ν.Π.",
                    TYPE_YA: "ΥΑ ", TYPE_KYA: "ΚΥΑ ", TYPE_PSIFISMA: "ψήφισμα ",
                    TYPE_AN: "α.ν.", TYPE_ND: "ν.δ.", TYPE_KANVOULIS: "Καν.Βουλής ",
                    TYPE_KANAP: "καν.απόφ. ", TYPE_APOF_DIOIK: "απόφ.Διοικ. ",
                    TYPE_APOF_PERIF: "απόφ.Περιφ. ", TYPE_APOF_NPDD: "απόφ.ΝΠΔΔ ",
-                   TYPE_ANAKOINOSI: "Ανακ. "}
+                   TYPE_ANAKOINOSI: "Ανακ. ", TYPE_PYS: "Π.Υ.Σ. "}
 _PREFIX_KEY = {TYPE_NOMOS: "N", TYPE_PD: "PD", TYPE_PNP: "PNP",
                TYPE_YA: "YA", TYPE_KYA: "KYA", TYPE_PSIFISMA: "PS",
                TYPE_AN: "AN", TYPE_ND: "ND", TYPE_KANVOULIS: "KANV",
                TYPE_KANAP: "KANAP", TYPE_APOF_DIOIK: "APD",
                TYPE_APOF_PERIF: "APP", TYPE_APOF_NPDD: "APN",
-               TYPE_ANAKOINOSI: "ANAK"}
+               TYPE_ANAKOINOSI: "ANAK", TYPE_PYS: "PYS"}
 
 
 def make_instrument_id(t: str, number: int, year: int) -> str:

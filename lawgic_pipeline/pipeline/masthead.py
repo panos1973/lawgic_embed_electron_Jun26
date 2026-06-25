@@ -22,7 +22,7 @@ from typing import Optional
 
 from models import (TYPE_NOMOS, TYPE_PD, TYPE_PNP, TYPE_YA, TYPE_KYA, TYPE_PSIFISMA,
                     TYPE_AN, TYPE_ND, TYPE_KANVOULIS, TYPE_KANAP, TYPE_APOF_DIOIK,
-                    TYPE_APOF_PERIF, TYPE_APOF_NPDD, TYPE_ANAKOINOSI)
+                    TYPE_APOF_PERIF, TYPE_APOF_NPDD, TYPE_ANAKOINOSI, TYPE_PYS)
 
 # Apostrophe / keraia variants that appear in "ΥΠ' ΑΡΙΘΜ." — match any or none.
 _APOS = r"['ʼ΄´’‘]?"
@@ -34,6 +34,11 @@ _ARITHM = r"ΑΡΙΘ(?:ΜΟΣ|ΜΟΝ|Μ|\.)?\.?"
 # qualified headers (ΑΝΑΓΚΑΣΤΙΚΟΣ/ΝΟΜΟΘΕΤΙΚΟ) must precede the bare ΝΟΜΟΣ/ΔΙΑΤΑΓΜΑ.
 _TYPE_PATTERNS = [
     (TYPE_PNP, re.compile(r"ΠΡΑΞΗ\s+ΝΟΜΟΘΕΤΙΚΟΥ\s+ΠΕΡΙΕΧΟΜΕΝΟΥ", re.IGNORECASE)),
+    # Act of the Cabinet — header "ΠΡΑΞΕΙΣ/ΠΡΑΞΗ ΥΠΟΥΡΓΙΚΟΥ ΣΥΜΒΟΥΛΙΟΥ". The (?:Η|ΕΙΣ)
+    # alternation deliberately does NOT match the genitive "ΠΡΑΞΗΣ" (a body citation
+    # «της Πράξης Υπουργικού Συμβουλίου») — and the real header sits at the top, so it
+    # wins by position anyway. Numberless: id from the gazette coordinates.
+    (TYPE_PYS, re.compile(r"ΠΡΑΞ(?:Η|ΕΙΣ)\s+ΥΠΟΥΡΓΙΚΟΥ\s+ΣΥΜΒΟΥΛΙΟΥ", re.IGNORECASE)),
     # FEK Α΄ — additional primary legislation (before the bare ΝΟΜΟΣ/ΔΙΑΤΑΓΜΑ rules)
     (TYPE_AN, re.compile(
         r"ΑΝΑΓΚΑΣΤΙΚΟΣ\s+ΝΟΜΟΣ\s+ΥΠ" + _APOS + r"\s*" + _ARITHM +
@@ -82,7 +87,7 @@ _TYPE_PATTERNS = [
 _NUMBERLESS_TYPES = {
     TYPE_PNP, TYPE_YA, TYPE_KYA, TYPE_PSIFISMA, TYPE_KANVOULIS,
     TYPE_KANAP, TYPE_APOF_DIOIK, TYPE_APOF_PERIF, TYPE_APOF_NPDD,
-    TYPE_ANAKOINOSI,
+    TYPE_ANAKOINOSI, TYPE_PYS,
 }
 
 # Standalone number line, used when the type word and the number are on separate

@@ -18,7 +18,7 @@ from typing import Optional
 import llm
 from models import (TYPE_NOMOS, TYPE_PD, TYPE_PNP, TYPE_PSIFISMA, TYPE_AN, TYPE_ND,
                     TYPE_KANVOULIS, TYPE_KANAP, TYPE_APOF_DIOIK, TYPE_APOF_PERIF,
-                    TYPE_APOF_NPDD, TYPE_YA, TYPE_KYA)
+                    TYPE_APOF_NPDD, TYPE_YA, TYPE_KYA, TYPE_PYS)
 from normalize import fold_for_bm25
 
 # The Greek heading that opens each instrument -> our taxonomy code.
@@ -36,6 +36,7 @@ _LABELS = {
     "ΑΠΟΦΑΣΗ ΝΠΔΔ": TYPE_APOF_NPDD,
     "ΥΠΟΥΡΓΙΚΗ ΑΠΟΦΑΣΗ": TYPE_YA,
     "ΚΟΙΝΗ ΥΠΟΥΡΓΙΚΗ ΑΠΟΦΑΣΗ": TYPE_KYA,
+    "ΠΡΑΞΗ ΥΠΟΥΡΓΙΚΟΥ ΣΥΜΒΟΥΛΙΟΥ": TYPE_PYS,
 }
 # accent/case-folded lookup, so the model's label matches even if it varies the casing
 _FOLDED = {fold_for_bm25(k): v for k, v in _LABELS.items()}
