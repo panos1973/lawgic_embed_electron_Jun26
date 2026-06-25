@@ -112,6 +112,36 @@ def _di_markdown(path: str, file_key: str, pages: list[int] | None = None) -> st
     return md
 
 
+def _raw_page1_text(path: str) -> str:
+    """Plain (non-column) text of page 1 — the FEK masthead is a full-width block that
+    the two-column reconstruction can split ('…ΤΕΥΧΟΣ | ΔΕΥΤΕΡΟ Αρ. Φύλλου N'), dropping
+    the series. pdfplumber's plain extract_text() reads it left-to-right, intact."""
+    try:
+        import pdfplumber
+        with pdfplumber.open(path) as pdf:
+            return (pdf.pages[0].extract_text() or "") if pdf.pages else ""
+    except Exception:                                  # noqa: BLE001
+        return ""
+
+
+def _best_masthead(*sources: str) -> dict:
+    """Parse the masthead from each candidate head and keep the most complete result
+    (most of type / series / number / year / fek_number resolved). Lets the raw page-1
+    win for normal docs while the column-reconstructed text remains a fallback for a
+    scanned/DI'd page-1 (where the raw text is empty)."""
+    from pipeline.normalize import normalize_glyphs
+    best, best_score = None, -1
+    for src in sources:
+        if not (src or "").strip():
+            continue
+        mh = parse_masthead(normalize_glyphs(src[:4000]))
+        score = sum(1 for k in ("instrument_type", "fek_series", "number",
+                                "year", "fek_number") if mh.get(k) not in (None, ""))
+        if score > best_score:
+            best, best_score = mh, score
+    return best if best is not None else parse_masthead("")
+
+
 def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
     """Extract a FEK PDF to full-document text + table map + masthead identity."""
     from sidecar.pdf_extract import detect
@@ -203,16 +233,16 @@ def extract_pdf(path: str, use_azure: bool = True) -> ExtractResult:
                             f"page vision: page {pg} not read ({why}); kept extracted text")
         text = "\n\n".join(m for m in pages_markdown if m)
 
-    # Masthead is parsed on the document head, GLYPH-REPAIRED first: the headline
-    # "ΝΟΜΟΣ" (and Π.Δ., etc.) is frequently encoded with Latin homoglyphs
-    # ("NOMO"+Greek "Σ") that the all-Greek masthead regexes miss — which silently
-    # sent otherwise-fine laws to review (type=None). The normalize STAGE repairs the
-    # body downstream, but masthead identification happens here in extract, before
-    # that, so repair the head now. Homoglyph repair is char-for-char, so the regex
-    # offsets/title extraction are unaffected. The body text handed downstream still
-    # goes through strip_furniture (+ the full normalize stage) as before.
+    # Masthead is parsed GLYPH-REPAIRED (the headline "ΝΟΜΟΣ" is frequently encoded with
+    # Latin homoglyphs "NOMO"+Greek "Σ" the all-Greek regexes miss), and from the RAW
+    # page-1 text rather than the column-reconstructed body: the masthead is a FULL-WIDTH
+    # block, and two-column reconstruction can split its line ("…ΤΕΥΧΟΣ | ΔΕΥΤΕΡΟ Αρ.
+    # Φύλλου N"), losing the FEK series and collapsing identification for the whole doc.
+    # The raw page reads the masthead left-to-right intact. Parse BOTH and keep whichever
+    # resolves more identity fields, so a scanned page-1 (raw empty -> DI'd column text)
+    # still works. Repair is char-for-char, so regex offsets / title extraction are safe.
     from pipeline.normalize import normalize_glyphs, strip_furniture
-    masthead = parse_masthead(normalize_glyphs(text[:4000]))
+    masthead = _best_masthead(_raw_page1_text(path), text)
     warnings.extend(f"masthead: {w}" for w in masthead.get("warnings", []))
     text = strip_furniture(text)
 

@@ -177,6 +177,14 @@ LLM_RPM = _float_env("LLM_RPM")           # enrichment LLM (LLM_PROVIDER) reques
 # enough that no legitimate single call (incl. an 8k-token amendment extraction) hits it.
 NET_TIMEOUT = _float_env("NET_TIMEOUT") or 180.0
 
+# Hard per-document wall-clock cap (seconds). A malformed/oversized PDF can wedge a
+# NATIVE parser (pdfplumber/PyMuPDF) or a long-poll (Azure DI) in a way no per-call
+# network timeout catches — and one such document stalls the whole run (a serial retry
+# blocks on the very first one). The orchestrator caps each document at this; on timeout
+# it's parked back in review and the run moves on. Generous enough that the slowest
+# legitimate doc (a 1000+-article codification) never trips it. Env: DOC_TIMEOUT.
+DOC_TIMEOUT = _int_env("DOC_TIMEOUT", 1500)
+
 
 def require(*names: str) -> None:
     """Fail fast if required secrets are missing."""

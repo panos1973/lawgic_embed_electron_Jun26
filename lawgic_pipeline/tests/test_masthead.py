@@ -18,6 +18,19 @@ PYS = """ΕΦΗΜΕΡΙΔΑ ΤΗΣ ΚΥΒΕΡΝΗΣΕΩΣ
 """
 
 
+def test_best_masthead_keeps_the_source_that_resolves_the_series():
+    # two-column reconstruction can split the full-width masthead, dropping the series
+    # ("…ΤΕΥΧΟΣ" with "ΔΕΥΤΕΡΟ Αρ. Φύλλου N" carried off elsewhere) — which collapses
+    # identification for the whole FEK Β΄ doc. _best_masthead must keep the raw, intact
+    # reading where the series survives, regardless of argument order.
+    from pipeline.extract import _best_masthead
+    mangled = "8 Ιανουαρίου 2025 ΤΕΥΧΟΣ\nΑΠΟΦΑΣΕΙΣ\nΑριθμ. ΥΠΕΝ/1/2\n"
+    intact = "8 Ιανουαρίου 2025 ΤΕΥΧΟΣ ΔΕΥΤΕΡΟ Αρ. Φύλλου 4\nΑΠΟΦΑΣΕΙΣ\n"
+    assert _best_masthead(mangled, intact)["fek_series"] == "Β"
+    assert _best_masthead(intact, mangled)["fek_series"] == "Β"
+    assert _best_masthead("", intact)["fek_series"] == "Β"          # empty source skipped
+
+
 def test_praxi_ypourgikou_symvouliou_typed():
     r = parse_masthead(PYS)
     assert r["instrument_type"] == TYPE_PYS                       # Act of the Cabinet
